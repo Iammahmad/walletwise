@@ -1,0 +1,7 @@
+project_id = "spendspeak"
+
+[functions.parse-transcript]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
