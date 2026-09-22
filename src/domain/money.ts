@@ -80,6 +80,53 @@ export function minorToDecimal(amountMinor: number, currency: string): string {
   return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
 }
 
+const NUMERIC_PART_TYPES = new Set<Intl.NumberFormatPartTypes>([
+  'integer',
+  'group',
+  'decimal',
+  'fraction',
+]);
+
+function localizeDigits(value: string, digitMap: readonly string[]): string {
+  return Array.from(value, (digit) => digitMap[Number(digit)] ?? digit).join('');
+}
+
+function formatExactInteger(wholePart: string, locale: string): {
+  digitMap: readonly string[];
+  value: string;
+} {
+  // Probe the locale with a small, safe number to discover its grouping pattern.
+  // The actual money value remains a string and is never converted to a Number.
+  const groupingFormatter = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+    useGrouping: true,
+  });
+  const groupingParts = groupingFormatter.formatToParts(123456789);
+  const integerPartLengths = groupingParts
+    .filter((part) => part.type === 'integer')
+    .map((part) => Array.from(part.value).length);
+  const primaryGroupSize = integerPartLengths[integerPartLengths.length - 1] ?? 3;
+  const secondaryGroupSize = integerPartLengths[integerPartLengths.length - 2] ?? primaryGroupSize;
+  const groupSeparator = groupingParts.find((part) => part.type === 'group')?.value ?? ',';
+  const digitFormatter = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+    useGrouping: false,
+  });
+  const digitMap = Array.from({ length: 10 }, (_, digit) => digitFormatter.format(digit));
+
+  const groups: string[] = [];
+  let end = wholePart.length;
+  let groupSize = primaryGroupSize;
+  while (end > 0) {
+    const start = Math.max(0, end - groupSize);
+    groups.unshift(localizeDigits(wholePart.slice(start, end), digitMap));
+    end = start;
+    groupSize = secondaryGroupSize;
+  }
+
+  return { digitMap, value: groups.join(groupSeparator) };
+}
+
 export function formatMoney(amountMinor: number, currency: string, locale: string): string {
   const decimal = minorToDecimal(amountMinor, currency);
   const [wholePart = '0', fractionPart = ''] = decimal.replace('-', '').split('.');
@@ -90,25 +137,22 @@ export function formatMoney(amountMinor: number, currency: string, locale: strin
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
-  const positiveParts = formatter.formatToParts(BigInt(wholePart));
-  const withExactFraction = (parts: Intl.NumberFormatPart[]) => parts.map((part) =>
-    part.type === 'fraction' ? fractionPart.padEnd(digits, '0') : part.value,
-  );
-  if (!decimal.startsWith('-')) return withExactFraction(positiveParts).join('');
+  const isNegative = decimal.startsWith('-');
+  // Hermes supports Intl, but some Android builds reject BigInt values passed to
+  // formatToParts. Use a small Number only as an affix/decimal-symbol template.
+  const template = formatter.formatToParts(isNegative ? -1 : 1);
+  const { digitMap, value: localizedWholePart } = formatExactInteger(wholePart, locale);
+  const decimalSeparator = template.find((part) => part.type === 'decimal')?.value ?? '.';
+  const localizedFraction = localizeDigits(fractionPart.padEnd(digits, '0'), digitMap);
+  const numericCore = `${localizedWholePart}${digits > 0 ? `${decimalSeparator}${localizedFraction}` : ''}`;
 
-  // Preserve the locale's negative affixes, including for values between -1 and 0.
-  const negativeTemplate = formatter.formatToParts(-1n);
-  const numericTypes = new Set<Intl.NumberFormatPartTypes>(['integer', 'group', 'decimal', 'fraction']);
-  const firstNumeric = negativeTemplate.findIndex((part) => numericTypes.has(part.type));
-  let lastNumeric = negativeTemplate.length - 1;
-  while (lastNumeric >= 0 && !numericTypes.has(negativeTemplate[lastNumeric]!.type)) lastNumeric -= 1;
-  const firstPositiveNumeric = positiveParts.findIndex((part) => numericTypes.has(part.type));
-  let lastPositiveNumeric = positiveParts.length - 1;
-  while (lastPositiveNumeric >= 0 && !numericTypes.has(positiveParts[lastPositiveNumeric]!.type)) lastPositiveNumeric -= 1;
-  const numericCore = withExactFraction(positiveParts.slice(firstPositiveNumeric, lastPositiveNumeric + 1));
+  const firstNumeric = template.findIndex((part) => NUMERIC_PART_TYPES.has(part.type));
+  let lastNumeric = template.length - 1;
+  while (lastNumeric >= 0 && !NUMERIC_PART_TYPES.has(template[lastNumeric]!.type)) lastNumeric -= 1;
+
   return [
-    ...negativeTemplate.slice(0, firstNumeric).map((part) => part.value),
-    ...numericCore,
-    ...negativeTemplate.slice(lastNumeric + 1).map((part) => part.value),
+    ...template.slice(0, firstNumeric).map((part) => part.value),
+    numericCore,
+    ...template.slice(lastNumeric + 1).map((part) => part.value),
   ].join('');
 }

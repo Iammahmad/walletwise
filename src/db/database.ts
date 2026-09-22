@@ -1,8 +1,8 @@
-import * as Crypto from 'expo-crypto';
-import { getCalendars, getLocales } from 'expo-localization';
-import * as SQLite from 'expo-sqlite';
+import * as Crypto from "expo-crypto";
+import { getCalendars, getLocales } from "expo-localization";
+import * as SQLite from "expo-sqlite";
 
-import { DEFAULT_CATEGORIES } from './seed';
+import { DEFAULT_CATEGORIES } from "./seed";
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -128,21 +128,130 @@ CREATE INDEX IF NOT EXISTS idx_outbox_retry ON sync_outbox(user_id, next_retry_a
 PRAGMA user_version = 1;
 `;
 
+const MIGRATION_2 = `
+CREATE TABLE IF NOT EXISTS budget_categories (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  local_owner_id TEXT NOT NULL,
+  source_category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  icon TEXT NOT NULL,
+  color TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'local' CHECK(sync_status IN ('local', 'pending', 'synced', 'error')),
+  local_updated_at TEXT NOT NULL,
+  last_synced_at TEXT
+);
+
+INSERT OR IGNORE INTO budget_categories
+  (id, user_id, local_owner_id, source_category_id, name, icon, color, created_at, updated_at,
+   deleted_at, sync_status, local_updated_at, last_synced_at)
+SELECT id, user_id, local_owner_id, id, name, icon, color, created_at, updated_at,
+       deleted_at, sync_status, local_updated_at, last_synced_at
+FROM categories
+WHERE transaction_type = 'expense';
+
+ALTER TABLE transactions ADD COLUMN budget_category_id TEXT REFERENCES budget_categories(id) ON DELETE SET NULL;
+ALTER TABLE budgets ADD COLUMN budget_category_id TEXT REFERENCES budget_categories(id) ON DELETE SET NULL;
+
+UPDATE transactions
+SET budget_category_id = (
+  SELECT bc.id FROM budget_categories bc
+  WHERE bc.local_owner_id = transactions.local_owner_id
+    AND bc.source_category_id = transactions.category_id
+  LIMIT 1
+)
+WHERE type = 'expense' AND budget_category_id IS NULL;
+
+UPDATE budgets
+SET budget_category_id = (
+  SELECT bc.id FROM budget_categories bc
+  WHERE bc.local_owner_id = budgets.local_owner_id
+    AND bc.source_category_id = budgets.category_id
+  LIMIT 1
+)
+WHERE category_id IS NOT NULL AND budget_category_id IS NULL;
+
+ALTER TABLE sync_outbox RENAME TO sync_outbox_legacy;
+CREATE TABLE sync_outbox (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('profiles', 'accounts', 'categories', 'budget_categories', 'transactions', 'budgets')),
+  entity_id TEXT NOT NULL,
+  operation TEXT NOT NULL DEFAULT 'upsert' CHECK(operation IN ('upsert', 'delete')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(entity_type, entity_id)
+);
+INSERT OR IGNORE INTO sync_outbox SELECT * FROM sync_outbox_legacy;
+DROP TABLE sync_outbox_legacy;
+
+CREATE INDEX IF NOT EXISTS idx_budget_categories_owner ON budget_categories(local_owner_id, deleted_at, name);
+CREATE INDEX IF NOT EXISTS idx_budget_categories_source ON budget_categories(local_owner_id, source_category_id, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_categories_unique_source ON budget_categories(local_owner_id, source_category_id) WHERE source_category_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_transactions_budget_category ON transactions(local_owner_id, budget_category_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budgets_budget_category ON budgets(local_owner_id, budget_category_id, start_date, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_retry ON sync_outbox(user_id, next_retry_at, created_at);
+PRAGMA user_version = 2;
+`;
+
+const MIGRATION_3 = `
+ALTER TABLE budget_categories ADD COLUMN category_ids_json TEXT NOT NULL DEFAULT '[]';
+
+UPDATE budget_categories
+SET category_ids_json = printf('["%s"]', source_category_id)
+WHERE source_category_id IS NOT NULL AND category_ids_json = '[]';
+
+ALTER TABLE transactions ADD COLUMN budget_assignment_mode TEXT NOT NULL DEFAULT 'auto'
+  CHECK(budget_assignment_mode IN ('auto', 'explicit', 'none'));
+
+UPDATE transactions
+SET budget_assignment_mode = CASE
+  WHEN type != 'expense' OR budget_category_id IS NULL THEN 'none'
+  WHEN EXISTS (
+    SELECT 1 FROM budget_categories bc
+    WHERE bc.id = transactions.budget_category_id
+      AND bc.source_category_id = transactions.category_id
+  ) THEN 'auto'
+  ELSE 'explicit'
+END;
+
+UPDATE transactions
+SET budget_category_id = NULL
+WHERE budget_assignment_mode = 'auto';
+
+CREATE INDEX IF NOT EXISTS idx_transactions_budget_assignment
+  ON transactions(local_owner_id, budget_assignment_mode, category_id, budget_category_id, occurred_at DESC);
+PRAGMA user_version = 3;
+`;
+
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
-  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const row = await db.getFirstAsync<{ user_version: number }>(
+    "PRAGMA user_version",
+  );
   const version = row?.user_version ?? 0;
   if (version < 1) await db.execAsync(MIGRATION_1);
+  if (version < 2) await db.execAsync(MIGRATION_2);
+  if (version < 3) await db.execAsync(MIGRATION_3);
 }
 
 async function seed(db: SQLite.SQLiteDatabase): Promise<void> {
-  const existing = await db.getFirstAsync<{ id: string; default_currency: string }>('SELECT id, default_currency FROM local_profile LIMIT 1');
+  const existing = await db.getFirstAsync<{
+    id: string;
+    default_currency: string;
+  }>("SELECT id, default_currency FROM local_profile LIMIT 1");
   let ownerId = existing?.id;
   let currency = existing?.default_currency;
   if (!ownerId) {
     const locale = getLocales()[0];
     const calendar = getCalendars()[0];
     ownerId = Crypto.randomUUID();
-    currency = locale?.currencyCode ?? 'USD';
+    currency = locale?.currencyCode ?? "USD";
     const now = new Date().toISOString();
     await db.runAsync(
       `INSERT INTO local_profile
@@ -150,37 +259,81 @@ async function seed(db: SQLite.SQLiteDatabase): Promise<void> {
        VALUES (?, NULL, ?, ?, ?, 0, 0, 'system', ?, ?)`,
       ownerId,
       currency,
-      locale?.languageTag ?? 'en-US',
-      calendar?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+      locale?.languageTag ?? "en-US",
+      calendar?.timeZone ??
+        Intl.DateTimeFormat().resolvedOptions().timeZone ??
+        "UTC",
       now,
       now,
     );
   }
   const now = new Date().toISOString();
-  const accountCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM accounts WHERE local_owner_id = ?', ownerId);
+  const accountCount = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM accounts WHERE local_owner_id = ?",
+    ownerId,
+  );
   if ((accountCount?.count ?? 0) === 0) {
     await db.runAsync(
       `INSERT INTO accounts
        (id, user_id, local_owner_id, name, type, currency, opening_balance_minor, created_at, updated_at, sync_status, local_updated_at)
        VALUES (?, NULL, ?, 'Cash', 'cash', ?, 0, ?, ?, 'local', ?)`,
-      Crypto.randomUUID(), ownerId, currency ?? 'USD', now, now, now,
+      Crypto.randomUUID(),
+      ownerId,
+      currency ?? "USD",
+      now,
+      now,
+      now,
     );
     await db.runAsync(
       `INSERT INTO accounts
        (id, user_id, local_owner_id, name, type, currency, opening_balance_minor, created_at, updated_at, sync_status, local_updated_at)
        VALUES (?, NULL, ?, 'Bank', 'bank', ?, 0, ?, ?, 'local', ?)`,
-      Crypto.randomUUID(), ownerId, currency ?? 'USD', now, now, now,
+      Crypto.randomUUID(),
+      ownerId,
+      currency ?? "USD",
+      now,
+      now,
+      now,
     );
   }
-  const categoryCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM categories WHERE local_owner_id = ?', ownerId);
+  const categoryCount = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM categories WHERE local_owner_id = ?",
+    ownerId,
+  );
   if ((categoryCount?.count ?? 0) === 0) {
     for (const category of DEFAULT_CATEGORIES) {
+      const categoryId = Crypto.randomUUID();
       await db.runAsync(
         `INSERT INTO categories
          (id, user_id, local_owner_id, name, icon, color, transaction_type, is_default, created_at, updated_at, sync_status, local_updated_at)
          VALUES (?, NULL, ?, ?, ?, ?, ?, 1, ?, ?, 'local', ?)`,
-        Crypto.randomUUID(), ownerId, category.name, category.icon, category.color, category.type, now, now, now,
+        categoryId,
+        ownerId,
+        category.name,
+        category.icon,
+        category.color,
+        category.type,
+        now,
+        now,
+        now,
       );
+      if (category.type === "expense") {
+        await db.runAsync(
+          `INSERT INTO budget_categories
+           (id, user_id, local_owner_id, source_category_id, category_ids_json, name, icon, color, created_at, updated_at, sync_status, local_updated_at)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'local', ?)`,
+          categoryId,
+          ownerId,
+          categoryId,
+          JSON.stringify([categoryId]),
+          category.name,
+          category.icon,
+          category.color,
+          now,
+          now,
+          now,
+        );
+      }
     }
   }
 }
@@ -188,7 +341,7 @@ async function seed(db: SQLite.SQLiteDatabase): Promise<void> {
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!databasePromise) {
     databasePromise = (async () => {
-      const db = await SQLite.openDatabaseAsync('spendspeak.db');
+      const db = await SQLite.openDatabaseAsync("spendspeak.db");
       await migrate(db);
       await seed(db);
       return db;

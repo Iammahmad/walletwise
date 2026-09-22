@@ -33,4 +33,25 @@ describe('precise money conversion', () => {
     expect(formatMoney(9_007_199_254_740_001, 'PKR', 'en-US')).toContain('90,071,992,547,400.01');
     expect(formatMoney(-1, 'USD', 'en-US')).toBe('-$0.01');
   });
+
+  it('formats zero without passing BigInt values to Intl', () => {
+    const originalFormatToParts = Intl.NumberFormat.prototype.formatToParts;
+    const formatToPartsSpy = jest
+      .spyOn(Intl.NumberFormat.prototype, 'formatToParts')
+      .mockImplementation(function formatToParts(this: Intl.NumberFormat, value) {
+        if (typeof value === 'bigint') throw new TypeError('Cannot convert BigInt to number');
+        return originalFormatToParts.call(this, value);
+      });
+
+    try {
+      expect(formatMoney(0, 'PKR', 'en-PK')).toContain('0.00');
+      expect(formatToPartsSpy).toHaveBeenCalled();
+    } finally {
+      formatToPartsSpy.mockRestore();
+    }
+  });
+
+  it('preserves locale-specific Indian digit grouping', () => {
+    expect(formatMoney(123456789, 'INR', 'en-IN')).toContain('12,34,567.89');
+  });
 });

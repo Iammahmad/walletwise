@@ -9,6 +9,7 @@ const requestSchema = z.object({
   defaultCurrency: z.string().regex(/^[A-Z]{3}$/),
   accounts: z.array(z.string().min(1).max(80)).max(50),
   categories: z.array(z.string().min(1).max(80)).max(100),
+  budgetCategories: z.array(z.string().min(1).max(80)).max(100),
   referenceTime: z.string().datetime({ offset: true }),
 }).strict();
 
@@ -18,6 +19,7 @@ const transactionSchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
   merchant: z.string().trim().max(160).nullable(),
   category: z.string().trim().max(160).nullable(),
+  budget: z.string().trim().max(160).nullable(),
   account: z.string().trim().max(160).nullable(),
   occurredAt: z.string().datetime({ offset: true }).nullable(),
   note: z.string().trim().max(500).nullable(),
@@ -73,6 +75,8 @@ Deno.serve(async (request) => {
 Never invent amounts, dates, merchants, currencies, accounts, or categories. Unknown values must be null.
 Use only these accounts: ${JSON.stringify(parsed.data.accounts)}.
 Use only these categories: ${JSON.stringify(parsed.data.categories)}.
+Use only these budget categories: ${JSON.stringify(parsed.data.budgetCategories)}.
+The phrase "in [name]" or "under [name] budget" may explicitly assign an expense to a budget category. If no budget is explicitly mentioned, return budget null so the client can apply its local default mapping.
 Default currency: ${parsed.data.defaultCurrency}. Locale: ${parsed.data.locale}. Timezone: ${parsed.data.timezone}.
 Reference time: ${parsed.data.referenceTime}.
 Support multiple transactions. Return needsConfirmation true. Do not include commentary.
@@ -89,8 +93,8 @@ Transcript: ${JSON.stringify(parsed.data.transcript)}`;
             responseJsonSchema: {
               type: 'object', required: ['transactions', 'missingFields', 'needsConfirmation'],
               properties: {
-                transactions: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'object', required: ['type', 'amount', 'currency', 'merchant', 'category', 'account', 'occurredAt', 'note', 'confidence'], properties: {
-                  type: { type: 'string', enum: ['expense', 'income'] }, amount: { type: ['string', 'null'] }, currency: { type: ['string', 'null'] }, merchant: { type: ['string', 'null'] }, category: { type: ['string', 'null'] }, account: { type: ['string', 'null'] }, occurredAt: { type: ['string', 'null'] }, note: { type: ['string', 'null'] }, confidence: { type: 'number', minimum: 0, maximum: 1 },
+                transactions: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'object', required: ['type', 'amount', 'currency', 'merchant', 'category', 'budget', 'account', 'occurredAt', 'note', 'confidence'], properties: {
+                  type: { type: 'string', enum: ['expense', 'income'] }, amount: { type: ['string', 'null'] }, currency: { type: ['string', 'null'] }, merchant: { type: ['string', 'null'] }, category: { type: ['string', 'null'] }, budget: { type: ['string', 'null'] }, account: { type: ['string', 'null'] }, occurredAt: { type: ['string', 'null'] }, note: { type: ['string', 'null'] }, confidence: { type: 'number', minimum: 0, maximum: 1 },
                 } } },
                 missingFields: { type: 'array', items: { type: 'string' } }, needsConfirmation: { type: 'boolean' },
               },

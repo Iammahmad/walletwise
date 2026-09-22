@@ -1,7 +1,7 @@
-import 'react-native-url-polyfill/auto';
+import "react-native-url-polyfill/auto";
 
-import * as SecureStore from 'expo-secure-store';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import * as SecureStore from "expo-secure-store";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim();
@@ -16,7 +16,13 @@ const secureStorage = {
 
 const client: SupabaseClient | null = isCloudConfigured
   ? createClient(url!, publishableKey!, {
-      auth: { storage: secureStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+      auth: {
+        storage: secureStorage,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        flowType: "pkce",
+      },
     })
   : null;
 
@@ -25,6 +31,9 @@ export function getSupabase(): SupabaseClient | null {
 }
 
 export function requireSupabase(): SupabaseClient {
-  if (!client) throw new Error('Cloud services are not configured. SpendSpeak is running in local-only mode.');
+  if (!client)
+    throw new Error(
+      "Cloud services are not configured. SpendSpeak is running in local-only mode.",
+    );
   return client;
 }

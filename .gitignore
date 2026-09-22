@@ -43,3 +43,8 @@ coverage/
 # generated native folders
 /ios
 /android
+
+# Supabase CLI local cache
+/supabase/.temp/
+/releases/*.apk
+/releases/*.aab
