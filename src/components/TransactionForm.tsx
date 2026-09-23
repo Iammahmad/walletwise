@@ -40,6 +40,7 @@ interface Props {
   initial?: Transaction | null;
   source?: TransactionSource;
   originalTranscript?: string | null;
+  selectedType?: TransactionType;
   preset?: Partial<{
     type: TransactionType;
     amount: string;
@@ -61,6 +62,7 @@ export function TransactionForm({
   initial,
   source = "manual",
   originalTranscript = null,
+  selectedType,
   preset,
   submitLabel = "Save entry",
   onSubmit,
@@ -73,9 +75,7 @@ export function TransactionForm({
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>(
     [],
   );
-  const [type, setType] = useState<TransactionType>(
-    initial?.type ?? preset?.type ?? "expense",
-  );
+  const type = selectedType ?? initial?.type ?? preset?.type ?? "expense";
   const [amount, setAmount] = useState(
     initial
       ? minorToDecimal(initial.amountMinor, initial.currency)
@@ -85,17 +85,19 @@ export function TransactionForm({
     initial?.currency ?? preset?.currency ?? profile?.defaultCurrency ?? "USD",
   );
   const [accountId, setAccountId] = useState(initial?.accountId ?? "");
-  const [categoryId, setCategoryId] = useState(initial?.categoryId ?? "");
+  const [categoryId, setCategoryId] = useState(
+    initial?.type === type ? (initial.categoryId ?? "") : "",
+  );
   const [budgetSelection, setBudgetSelection] = useState(
-    initial
+    initial?.type === type
       ? initial.budgetAssignmentMode === "auto"
         ? "auto"
         : initial.budgetAssignmentMode === "explicit"
           ? (initial.budgetCategoryId ?? "none")
           : "none"
-      : preset?.budgetCategoryName
-        ? ""
-        : "auto",
+      : source === "voice" && !preset?.budgetCategoryName
+        ? "auto"
+        : "",
   );
   const [merchant, setMerchant] = useState(
     initial?.merchant ?? preset?.merchant ?? "",
@@ -139,7 +141,6 @@ export function TransactionForm({
                 item.transactionType === type &&
                 item.name.toLowerCase() === preset?.categoryName?.toLowerCase(),
             )?.id ||
-            nextCategories.find((item) => item.transactionType === type)?.id ||
             "",
         );
         setBudgetSelection(
@@ -150,7 +151,7 @@ export function TransactionForm({
                 item.name.toLowerCase() ===
                 preset?.budgetCategoryName?.toLowerCase(),
             )?.id ||
-            "auto",
+            (source === "voice" ? "auto" : ""),
         );
         setLoadError(null);
       })
@@ -165,16 +166,9 @@ export function TransactionForm({
     preset?.accountName,
     preset?.budgetCategoryName,
     preset?.categoryName,
+    source,
     type,
   ]);
-
-  const changeType = (nextType: TransactionType) => {
-    setType(nextType);
-    setCategoryId(
-      categories.find((item) => item.transactionType === nextType)?.id ?? "",
-    );
-    setBudgetSelection(nextType === "expense" ? "auto" : "none");
-  };
 
   const selectedAccount = accounts.find((item) => item.id === accountId);
   const selectedCategory = categories.find((item) => item.id === categoryId);
@@ -234,15 +228,11 @@ export function TransactionForm({
   );
 
   const resetAfterSave = () => {
-    const nextType: TransactionType = "expense";
-    setType(nextType);
     setAmount("");
     setCurrency(profile?.defaultCurrency ?? "USD");
     setAccountId(accounts[0]?.id ?? "");
-    setCategoryId(
-      categories.find((item) => item.transactionType === nextType)?.id ?? "",
-    );
-    setBudgetSelection("auto");
+    setCategoryId("");
+    setBudgetSelection(type === "expense" ? "" : "none");
     setMerchant("");
     setNote("");
     setOccurredAt(new Date());
@@ -257,6 +247,13 @@ export function TransactionForm({
   };
 
   const submit = async () => {
+    if (type === "expense" && !budgetSelection) {
+      setErrors((value) => ({
+        ...value,
+        budgetCategoryId: "Choose a budget option",
+      }));
+      return;
+    }
     const budgetCategoryId =
       budgetSelection === "auto"
         ? undefined
@@ -327,33 +324,6 @@ export function TransactionForm({
           {loadError}
         </Text>
       ) : null}
-      <View
-        accessibilityRole="radiogroup"
-        style={[styles.segment, { backgroundColor: colors.surfaceMuted }]}
-      >
-        {(["expense", "income"] as const).map((item) => (
-          <Pressable
-            key={item}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: type === item }}
-            onPress={() => changeType(item)}
-            style={[
-              styles.segmentOption,
-              type === item && { backgroundColor: colors.surface },
-            ]}
-          >
-            <Text
-              style={[
-                styles.segmentLabel,
-                { color: type === item ? colors.text : colors.textMuted },
-              ]}
-            >
-              {item === "expense" ? "Expense" : "Income"}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
       <FormField
         label="Amount"
         value={amount}
@@ -396,9 +366,11 @@ export function TransactionForm({
                 : "Automatic · Regular expense"
               : budgetSelection === "none"
                 ? "No budget"
-                : (selectedBudgetCategory?.name ??
-                  initial?.budgetCategoryName ??
-                  "Choose budget")
+                : !budgetSelection
+                  ? "Choose budget option"
+                  : (selectedBudgetCategory?.name ??
+                    initial?.budgetCategoryName ??
+                    "Choose budget")
           }
           icon="pie-chart-outline"
           error={errors.budgetCategoryId}
@@ -588,19 +560,6 @@ function SelectionButton({
 
 const styles = StyleSheet.create({
   form: { gap: spacing.md },
-  segment: { flexDirection: "row", padding: 4, borderRadius: radius.md },
-  segmentOption: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  segmentLabel: {
-    fontSize: 15,
-    fontWeight: "700",
-    textTransform: "capitalize",
-  },
   group: { gap: spacing.xs },
   fieldLabel: { fontSize: 14, fontWeight: "600" },
   selection: {

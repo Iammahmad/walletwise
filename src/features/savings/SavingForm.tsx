@@ -12,7 +12,7 @@ import {
   SUPPORTED_CURRENCIES,
 } from "@/src/domain/money";
 import type { SavingInput } from "@/src/domain/types";
-import { radius, spacing } from "@/src/design/tokens";
+import { spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
 import { useAppStore } from "@/src/state/appStore";
 
@@ -79,20 +79,6 @@ export function SavingForm({
 
   return (
     <View style={styles.form}>
-      <View
-        style={[
-          styles.notice,
-          { backgroundColor: colors.primarySoft, borderColor: colors.border },
-        ]}
-      >
-        <Text style={[styles.noticeTitle, { color: colors.text }]}>
-          Savings are tracked separately
-        </Text>
-        <Text style={[styles.noticeBody, { color: colors.textMuted }]}>
-          Logging savings does not change income, expenses, account balances, or
-          budgets.
-        </Text>
-      </View>
       <FormField
         label="Savings label"
         value={name}
@@ -153,14 +139,6 @@ export function SavingForm({
 
 const styles = StyleSheet.create({
   form: { gap: spacing.md },
-  notice: {
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    gap: 4,
-  },
-  noticeTitle: { fontSize: 15, fontWeight: "800" },
-  noticeBody: { fontSize: 13, lineHeight: 19 },
   label: { fontSize: 14, fontWeight: "600" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
 });

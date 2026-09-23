@@ -31,9 +31,6 @@ export function TransactionRow({
   const label = `${title}, ${amountPrefix}${formatMoney(transaction.amountMinor, transaction.currency, locale)}`;
   const metadata = [
     transaction.categoryName,
-    transaction.budgetCategoryName
-      ? `Budget: ${transaction.budgetCategoryName}`
-      : null,
     formatDate(transaction.occurredAt, locale, timezone, {
       month: "short",
       day: "numeric",

@@ -9,10 +9,7 @@ export default function AddSavingScreen() {
   const router = useRouter();
   const bump = useAppStore((state) => state.bumpDbRevision);
   return (
-    <Screen
-      title="Add savings"
-      subtitle="Build the habit without changing your ledger."
-    >
+    <Screen title="Add savings">
       <SavingForm
         onSubmit={async (input) => {
           await saveSaving(input);

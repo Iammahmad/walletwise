@@ -9,6 +9,21 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
+    function isAllowedPrivateCollection(privateCollection) {
+      return privateCollection in [
+        'accounts',
+        'categories',
+        'budgetCategories',
+        'transactions',
+        'budgets',
+        'savings',
+        'splitContacts',
+        'splits',
+        'splitSettlements',
+        'pushTokens'
+      ];
+    }
+
     match /users/{userId} {
       allow read: if ownsUserPath(userId);
       allow create, update: if ownsUserPath(userId)
@@ -16,10 +31,13 @@ service cloud.firestore {
       allow delete: if ownsUserPath(userId);
 
       match /{privateCollection}/{documentId} {
-        allow read: if ownsUserPath(userId);
+        allow read: if ownsUserPath(userId)
+          && isAllowedPrivateCollection(privateCollection);
         allow create, update: if ownsUserPath(userId)
+          && isAllowedPrivateCollection(privateCollection)
           && request.resource.data.user_id == userId;
-        allow delete: if ownsUserPath(userId);
+        allow delete: if ownsUserPath(userId)
+          && isAllowedPrivateCollection(privateCollection);
       }
     }
 

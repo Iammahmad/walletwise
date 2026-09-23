@@ -16,7 +16,6 @@ import { useAppStore } from "@/src/state/appStore";
 interface Props {
   budget: Budget | null;
   categories: BudgetCategory[];
-  allowOverall: boolean;
   monthStart: string;
   onClose: () => void;
   onSaved: () => void;
@@ -25,16 +24,13 @@ interface Props {
 export function BudgetModal({
   budget,
   categories,
-  allowOverall,
   monthStart,
   onClose,
   onSaved,
 }: Props) {
   const { colors } = useTheme();
   const profile = useAppStore((state) => state.profile)!;
-  const initialScope =
-    budget?.budgetCategoryId ??
-    (allowOverall ? "overall" : (categories[0]?.id ?? ""));
+  const initialScope = budget?.budgetCategoryId ?? "";
   const [amount, setAmount] = useState(
     budget ? minorToDecimal(budget.amountMinor, budget.currency) : "",
   );
@@ -43,23 +39,19 @@ export function BudgetModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const selected =
-    budgetCategoryId === "overall"
-      ? "Overall budget"
-      : (categories.find((item) => item.id === budgetCategoryId)?.name ??
-        budget?.budgetCategoryName ??
-        "Choose category");
+    categories.find((item) => item.id === budgetCategoryId)?.name ??
+    budget?.budgetCategoryName ??
+    "Choose budget category";
   const options = useMemo(
-    () => [
-      ...(allowOverall ? [{ value: "overall", label: "Overall budget" }] : []),
-      ...categories.map((item) => ({
+    () =>
+      categories.map((item) => ({
         value: item.id,
         label: item.name,
         detail: item.sourceCategoryName
           ? `Matching category: ${item.sourceCategoryName}`
           : "Explicit assignments or a same-name category",
       })),
-    ],
-    [allowOverall, categories],
+    [categories],
   );
 
   const submit = async () => {
@@ -70,8 +62,7 @@ export function BudgetModal({
       const currency = budget?.currency ?? profile.defaultCurrency;
       await saveBudget({
         ...(budget ? { id: budget.id } : {}),
-        budgetCategoryId:
-          budgetCategoryId === "overall" ? null : budgetCategoryId,
+        budgetCategoryId,
         amountMinor: decimalToMinor(amount, currency, profile.locale),
         currency,
         startDate: budget?.startDate ?? monthStart,
@@ -106,10 +97,12 @@ export function BudgetModal({
             error={error ?? undefined}
           />
           <View style={styles.group}>
-            <Text style={[styles.label, { color: colors.text }]}>Scope</Text>
+            <Text style={[styles.label, { color: colors.text }]}>
+              Budget category
+            </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Budget scope: ${selected}`}
+              accessibilityLabel={`Budget category: ${selected}`}
               disabled={Boolean(budget)}
               onPress={() => setCategorySheet(true)}
               style={[
@@ -141,7 +134,7 @@ export function BudgetModal({
           {!budget ? (
             <SelectionSheet
               visible={categorySheet}
-              title="Budget scope"
+              title="Budget category"
               selected={budgetCategoryId}
               options={options}
               onSelect={(value) => {

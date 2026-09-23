@@ -80,7 +80,12 @@ export default function configureExpo(_context: ConfigContext): ExpoConfig {
       },
     },
     android: {
-      googleServicesFile: "./google-services.json",
+      // Financial records and Firebase session state must not be copied into
+      // Android's device/cloud backup archives. Signed-in users restore from
+      // WalletWise sync instead.
+      allowBackup: false,
+      googleServicesFile:
+        process.env.GOOGLE_SERVICES_JSON?.trim() || "./google-services.json",
       adaptiveIcon: {
         backgroundColor: "#170B2B",
         foregroundImage: "./assets/walletwise-icon-purple-v1.png",

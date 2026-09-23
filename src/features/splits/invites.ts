@@ -8,6 +8,27 @@ import {
   requireFirebaseFunctions,
 } from "@/src/services/firebase/config";
 
+function configuredInviteBaseUrl(): string | null {
+  const configured = process.env.EXPO_PUBLIC_INVITE_BASE_URL?.trim();
+  if (!configured) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    throw new Error("The split invitation URL is not configured correctly.");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("The split invitation URL must be a secure HTTPS origin.");
+  }
+  return parsed.href.replace(/\/$/, "");
+}
+
 export async function createConnectionInvite(): Promise<{
   token: string;
   url: string;
@@ -20,10 +41,7 @@ export async function createConnectionInvite(): Promise<{
   );
   const result = await createInvite({});
   const token = splitInviteTokenSchema.parse(result.data.token);
-  const baseUrl = process.env.EXPO_PUBLIC_INVITE_BASE_URL?.trim().replace(
-    /\/$/,
-    "",
-  );
+  const baseUrl = configuredInviteBaseUrl();
   const url = baseUrl
     ? `${baseUrl}/invite/${token}`
     : Linking.createURL(`invite/${token}`);

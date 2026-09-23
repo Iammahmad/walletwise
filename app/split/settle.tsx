@@ -13,8 +13,11 @@ import {
 } from "@/src/domain/money";
 import { spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
+import { validateSettlement } from "@/src/features/splits/calculations";
 import { saveSettlement } from "@/src/features/splits/repository";
 import { normalizeError } from "@/src/services/errors";
+import { getFirebaseAuth } from "@/src/services/firebase/config";
+import { syncNow } from "@/src/services/sync";
 import { useAppStore } from "@/src/state/appStore";
 
 export default function SettleScreen() {
@@ -42,17 +45,20 @@ export default function SettleScreen() {
     setSaving(true);
     setError(null);
     try {
+      const amountMinor = decimalToMinor(amount, currency);
+      validateSettlement(balance, direction, amountMinor);
       await saveSettlement({
         splitId: params.splitId ?? null,
         contactId: params.contactId,
         direction,
-        amountMinor: decimalToMinor(amount, currency),
+        amountMinor,
         currency,
         occurredAt: new Date().toISOString(),
         note: note.trim() || null,
       });
       bump();
-      router.back();
+      if (getFirebaseAuth()?.currentUser) void syncNow().catch(() => undefined);
+      router.replace("/(tabs)/splits");
     } catch (caught) {
       setError(normalizeError(caught).message);
     } finally {
@@ -63,7 +69,7 @@ export default function SettleScreen() {
     <Screen title="Settle up" subtitle={`With ${params.name ?? "your friend"}`}>
       <Card style={[styles.hero, { backgroundColor: colors.surfaceMuted }]}>
         <Text style={[styles.label, { color: colors.textMuted }]}>
-          {direction === "received" ? "They paid you" : "You paid them"}
+          {direction === "received" ? "Money they owe you" : "Money you owe"}
         </Text>
         <Text style={[styles.balance, { color: colors.text }]}>
           {formatMoney(Math.abs(balance), currency, profile.locale)}
@@ -82,12 +88,6 @@ export default function SettleScreen() {
         placeholder="Bank transfer, cash…"
         maxLength={500}
       />
-      <Card style={{ backgroundColor: colors.primarySoft }}>
-        <Text style={[styles.info, { color: colors.textMuted }]}>
-          This updates only the balance in Splits. It is not recorded as income,
-          an expense, savings, or an account transfer.
-        </Text>
-      </Card>
       {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
       <Button
         label="Confirm settlement"
@@ -102,5 +102,4 @@ const styles = StyleSheet.create({
   hero: { gap: spacing.xs },
   label: { fontSize: 12 },
   balance: { fontSize: 29, fontWeight: "900" },
-  info: { fontSize: 12, lineHeight: 18 },
 });

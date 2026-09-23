@@ -71,16 +71,6 @@ export default function BudgetCategoryManagementScreen() {
         />
       }
     >
-      <Card style={{ backgroundColor: colors.primarySoft }}>
-        <Text style={[styles.helperTitle, { color: colors.primary }]}>
-          Simple automatic matching
-        </Text>
-        <Text style={[styles.helperBody, { color: colors.text }]}>
-          An automatic expense counts toward a budget with the same name. For
-          example, Food counts toward Food when that budget exists. Choose a
-          different budget explicitly when recording the expense.
-        </Text>
-      </Card>
       {loading ? (
         <FeedbackState kind="loading" />
       ) : error ? (
@@ -226,10 +216,7 @@ function BudgetCategoryModal({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <Screen
-        title={item ? "Edit budget category" : "New budget category"}
-        subtitle="A same-name expense category matches automatically; other expenses can be assigned explicitly."
-      >
+      <Screen title={item ? "Edit budget category" : "New budget category"}>
         <CategoryAppearanceFields
           name={name}
           icon={icon}
@@ -267,8 +254,6 @@ function BudgetCategoryModal({
 }
 
 const styles = StyleSheet.create({
-  helperTitle: { fontSize: 15, fontWeight: "700" },
-  helperBody: { fontSize: 13, lineHeight: 19, marginTop: spacing.xs },
   listCard: { paddingVertical: 0 },
   row: {
     minHeight: 70,

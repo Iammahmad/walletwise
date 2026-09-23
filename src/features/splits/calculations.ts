@@ -44,3 +44,29 @@ export function applySettlement(
   }
   return balanceMinor + (direction === "received" ? -amountMinor : amountMinor);
 }
+
+export function settlementDirectionForBalance(
+  balanceMinor: number,
+): "received" | "paid" {
+  if (!Number.isSafeInteger(balanceMinor) || balanceMinor === 0) {
+    throw new Error("There is no outstanding balance to settle.");
+  }
+  return balanceMinor > 0 ? "received" : "paid";
+}
+
+export function validateSettlement(
+  balanceMinor: number,
+  direction: "received" | "paid",
+  amountMinor: number,
+): void {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    throw new Error("Enter a valid settlement amount.");
+  }
+  const expectedDirection = settlementDirectionForBalance(balanceMinor);
+  if (direction !== expectedDirection) {
+    throw new Error("The settlement direction does not match who owes money.");
+  }
+  if (amountMinor > Math.abs(balanceMinor)) {
+    throw new Error("The settlement cannot exceed the outstanding balance.");
+  }
+}

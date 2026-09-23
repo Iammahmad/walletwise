@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/src/components/Button";
@@ -10,13 +10,8 @@ import { Screen } from "@/src/components/Screen";
 import { formatMoney } from "@/src/domain/money";
 import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
-import { createConnectionInvite, shareInviteOnWhatsApp } from "./invites";
 import { listContactBalances, listSplits } from "./repository";
 import { useReloadable } from "@/src/hooks/useReloadable";
-import {
-  getFirebaseAuth,
-  isFirebaseFunctionsEnabled,
-} from "@/src/services/firebase/config";
 import { useAppStore } from "@/src/state/appStore";
 
 const initials = (name: string) =>
@@ -31,7 +26,6 @@ export default function SplitsScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const profile = useAppStore((state) => state.profile)!;
-  const [message, setMessage] = useState<string | null>(null);
   const loader = useCallback(async () => {
     const [balances, splits] = await Promise.all([
       listContactBalances(),
@@ -52,28 +46,9 @@ export default function SplitsScreen() {
     0,
   );
 
-  const invite = async () => {
-    setMessage(null);
-    if (!getFirebaseAuth()?.currentUser) {
-      router.push("/auth");
-      return;
-    }
-    try {
-      const { url } = await createConnectionInvite();
-      await shareInviteOnWhatsApp(url);
-    } catch (caught) {
-      setMessage(
-        caught instanceof Error
-          ? caught.message
-          : "The invitation could not be created.",
-      );
-    }
-  };
-
   return (
     <Screen
       title="Splits"
-      subtitle="Shared expenses and loans, kept separate."
       action={
         <Pressable
           accessibilityRole="button"
@@ -85,11 +60,6 @@ export default function SplitsScreen() {
         </Pressable>
       }
     >
-      {message ? (
-        <Card style={{ backgroundColor: colors.dangerSoft }}>
-          <Text style={{ color: colors.danger }}>{message}</Text>
-        </Card>
-      ) : null}
       <Card
         style={[styles.balanceCard, { backgroundColor: colors.surfaceMuted }]}
       >
@@ -128,38 +98,11 @@ export default function SplitsScreen() {
           </View>
         </View>
       </Card>
-      <Card style={[styles.privacy, { backgroundColor: colors.primarySoft }]}>
-        <Ionicons
-          name="shield-checkmark-outline"
-          size={22}
-          color={colors.primary}
-        />
-        <Text style={[styles.privacyText, { color: colors.textMuted }]}>
-          Splits never change transactions, income, savings, account balances,
-          or budgets.{" "}
-          {!isFirebaseFunctionsEnabled
-            ? "Free mode keeps Splits on this device."
-            : ""}
-        </Text>
-      </Card>
-      <View style={styles.actions}>
-        <View style={styles.action}>
-          <Button
-            label="New split"
-            icon="people-outline"
-            onPress={() => router.push("/split/new")}
-          />
-        </View>
-        <View style={styles.action}>
-          <Button
-            label="Invite on WhatsApp"
-            icon="logo-whatsapp"
-            variant="secondary"
-            disabled={!isFirebaseFunctionsEnabled}
-            onPress={() => void invite()}
-          />
-        </View>
-      </View>
+      <Button
+        label="New split"
+        icon="people-outline"
+        onPress={() => router.push("/split/new")}
+      />
       {loading ? (
         <FeedbackState kind="loading" />
       ) : error ? (
@@ -176,7 +119,7 @@ export default function SplitsScreen() {
               Friends
             </Text>
             <Text style={[styles.sectionMeta, { color: colors.textMuted }]}>
-              {data.balances.length} connected or local
+              {data.balances.length} friends
             </Text>
           </View>
           <Card>
@@ -212,7 +155,8 @@ export default function SplitsScreen() {
                     <Text
                       style={[styles.friendMeta, { color: colors.textMuted }]}
                     >
-                      {openSplitCount} open · {contact.status}
+                      {openSplitCount} open{" "}
+                      {openSplitCount === 1 ? "split" : "splits"}
                     </Text>
                   </View>
                   <View>
@@ -243,9 +187,9 @@ export default function SplitsScreen() {
             ) : (
               <FeedbackState
                 kind="empty"
-                message="Add a friend locally or invite them to WalletWise."
-                actionLabel="Invite a friend"
-                onAction={() => void invite()}
+                message="Add a friend while creating your first split."
+                actionLabel="New split"
+                onAction={() => router.push("/split/new")}
               />
             )}
           </Card>
@@ -342,10 +286,6 @@ const styles = StyleSheet.create({
   balanceGrid: { flexDirection: "row", gap: spacing.xl, marginTop: spacing.sm },
   balanceLabel: { fontSize: 11 },
   balanceValue: { fontSize: 14, fontWeight: "800", marginTop: 3 },
-  privacy: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  privacyText: { flex: 1, fontSize: 12, lineHeight: 18 },
-  actions: { flexDirection: "row", gap: spacing.sm },
-  action: { flex: 1 },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",

@@ -40,10 +40,7 @@ describe("monthly budget dashboard selection", () => {
       "2026-08-01",
     );
 
-    expect(selected.map((item) => item.id)).toEqual([
-      "overall-current",
-      "food-current",
-    ]);
+    expect(selected.map((item) => item.id)).toEqual(["food-current"]);
     expect(
       selectMonthlyBudgets(
         [
@@ -53,7 +50,7 @@ describe("monthly budget dashboard selection", () => {
         ],
         "2026-07-01",
       ).map((item) => item.id),
-    ).toEqual(["overall-old", "travel-old-only"]);
+    ).toEqual(["travel-old-only"]);
   });
 
   it("uses updated-at as a deterministic tie-breaker", () => {

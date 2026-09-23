@@ -141,7 +141,7 @@ describe("Firebase authentication and local-ledger ownership", () => {
 
   it("deletes private cloud data and auth identity in free mode", async () => {
     await deleteCloudAccount();
-    expect(getDocs).toHaveBeenCalledTimes(9);
+    expect(getDocs).toHaveBeenCalledTimes(10);
     expect(deleteDoc).toHaveBeenCalledWith({ path: "users/user-1" });
     expect(deleteUser).toHaveBeenCalledWith(user);
     expect(repository.unlinkCloudUser).toHaveBeenCalled();

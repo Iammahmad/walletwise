@@ -56,14 +56,7 @@ export default function ContactBalanceScreen() {
     );
   const { contact, balanceMinor } = data.balance;
   return (
-    <Screen
-      title={contact.displayName}
-      subtitle={
-        contact.status === "connected"
-          ? "Connected on WalletWise"
-          : "Local split contact"
-      }
-    >
+    <Screen title={contact.displayName}>
       <Card style={[styles.hero, { backgroundColor: colors.surfaceMuted }]}>
         <Text style={[styles.label, { color: colors.textMuted }]}>
           {balanceMinor >= 0

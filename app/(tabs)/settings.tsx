@@ -168,6 +168,12 @@ export default function SettingsScreen() {
         />
       </Section>
       <Section title="Cloud & privacy">
+        <SettingRow
+          icon={email ? "cloud-done-outline" : "phone-portrait-outline"}
+          label="App mode"
+          value={email ? `Connected to Firebase · ${email}` : "Local-only mode"}
+          onPress={() => (email ? void synchronize() : router.push("/auth"))}
+        />
         <View style={styles.switchRow}>
           <View style={styles.settingText}>
             <Text style={[styles.settingLabel, { color: colors.text }]}>
@@ -225,9 +231,9 @@ export default function SettingsScreen() {
         </View>
         {!isFirebaseFunctionsEnabled ? (
           <Text style={[styles.privacy, { color: colors.textMuted }]}>
-            Free cloud mode: authentication and private Firestore backup work.
-            Connected invitations, push notifications, and cloud AI stay off;
-            local Splits continue to work on this device.
+            Free cloud mode includes authentication and private Firestore backup
+            for your tracker, savings, and Splits. Invitations, notifications,
+            and cloud AI remain unavailable.
           </Text>
         ) : null}
         {email ? (

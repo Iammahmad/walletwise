@@ -14,7 +14,6 @@ import {
   type QueryDocumentSnapshot,
   type QueryConstraint,
 } from "firebase/firestore";
-import { httpsCallable } from "firebase/functions";
 
 import {
   getCloudPayload,
@@ -27,12 +26,8 @@ import {
   setLastPulledAt,
   type OutboxItem,
 } from "@/src/db/repository";
-import { mergeRemoteSplit } from "@/src/features/splits/cloudMerge";
-import {
-  getFirebaseAuth,
-  getFirebaseFunctions,
-  getFirestoreDb,
-} from "./firebase/config";
+import { mergePrivateSplit } from "@/src/features/splits/cloudMerge";
+import { getFirebaseAuth, getFirestoreDb } from "./firebase/config";
 import { normalizeError } from "./errors";
 
 const PRIVATE_COLLECTIONS = [
@@ -43,6 +38,7 @@ const PRIVATE_COLLECTIONS = [
   ["budgets", "budgets"],
   ["savings", "savings"],
   ["split_contacts", "splitContacts"],
+  ["splits", "splits"],
   ["split_settlements", "splitSettlements"],
 ] as const;
 const PULL_PAGE_SIZE = 500;
@@ -57,26 +53,11 @@ function cloudCollection(entityType: OutboxItem["entityType"]): string {
 
 async function push(userId: string): Promise<void> {
   const firestore = getFirestoreDb();
-  const functions = getFirebaseFunctions();
   if (!firestore) return;
-  const upsertSplit = functions
-    ? httpsCallable<Record<string, unknown>, { saved: boolean }>(
-        functions,
-        "upsertSplit",
-      )
-    : null;
   for (const item of await listOutbox(userId)) {
     try {
       const payload = await getCloudPayload(item.entityType, item.entityId);
       if (!payload) {
-        await markOutboxSuccess(item);
-        continue;
-      }
-      if (item.entityType === "splits") {
-        // Shared split writes require trusted validation. In free mode they
-        // remain queued locally while all private ledger writes keep syncing.
-        if (!upsertSplit) continue;
-        await upsertSplit(payload);
         await markOutboxSuccess(item);
         continue;
       }
@@ -110,7 +91,7 @@ async function push(userId: string): Promise<void> {
 
 async function pullPrivateCollection(
   userId: string,
-  localName: Exclude<OutboxItem["entityType"], "profiles" | "splits">,
+  localName: Exclude<OutboxItem["entityType"], "profiles">,
   remoteName: string,
 ): Promise<void> {
   const firestore = getFirestoreDb();
@@ -133,30 +114,15 @@ async function pullPrivateCollection(
     const rows = snapshot.docs.map(
       (item) => item.data() as Record<string, string | number | boolean | null>,
     );
-    await mergeRemoteRows(localName, rows);
+    if (localName === "splits") {
+      for (const row of snapshot.docs) await mergePrivateSplit(row.data());
+    } else {
+      await mergeRemoteRows(localName, rows);
+    }
     if (snapshot.size < PULL_PAGE_SIZE) break;
     cursor = snapshot.docs.at(-1) ?? null;
   }
   await setLastPulledAt(userId, localName, pullStartedAt);
-}
-
-async function pullSharedSplits(userId: string): Promise<void> {
-  const firestore = getFirestoreDb();
-  if (!firestore) return;
-  const lastPulledAt = await getLastPulledAt(userId, "splits");
-  const pullStartedAt = new Date().toISOString();
-  const snapshot = await getDocs(
-    query(
-      collection(firestore, "splits"),
-      where("participant_uids", "array-contains", userId),
-      where("updated_at", ">", lastPulledAt),
-      where("updated_at", "<=", pullStartedAt),
-      orderBy("updated_at", "asc"),
-      limit(PULL_PAGE_SIZE),
-    ),
-  );
-  for (const item of snapshot.docs) await mergeRemoteSplit(item.data());
-  await setLastPulledAt(userId, "splits", pullStartedAt);
 }
 
 async function pull(userId: string): Promise<void> {
@@ -172,9 +138,8 @@ async function pull(userId: string): Promise<void> {
     if (local === "split_settlements") continue;
     await pullPrivateCollection(userId, local, remote);
   }
-  await pullSharedSplits(userId);
-  // Settlements may reference a shared split, so restore them only after the
-  // parent split and its participant contacts are present locally.
+  // Restore settlements only after their parent splits and private contacts
+  // are present locally so SQLite foreign keys remain valid.
   await pullPrivateCollection(userId, "split_settlements", "splitSettlements");
 }
 

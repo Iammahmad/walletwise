@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Card } from "@/src/components/Card";
+import { IconButton } from "@/src/components/IconButton";
 import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
 import { formatMoney } from "@/src/domain/money";
@@ -10,7 +11,6 @@ import { useAppStore } from "@/src/state/appStore";
 
 interface Props {
   progress: BudgetProgress;
-  prominent?: boolean;
   onOpen?: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -18,7 +18,6 @@ interface Props {
 
 export function BudgetProgressCard({
   progress,
-  prominent = false,
   onOpen,
   onEdit,
   onDelete,
@@ -31,23 +30,15 @@ export function BudgetProgressCard({
   const percentage = Math.round(ratio * 100);
   const barWidth =
     `${Math.min(Math.max(ratio * 100, 0), 100)}%` as `${number}%`;
-  const title =
-    budget.budgetCategoryName ??
-    (budget.budgetCategoryId
-      ? "Archived budget category"
-      : "Overall monthly budget");
+  const title = budget.budgetCategoryName ?? "Archived budget category";
   const icon = (budget.budgetCategoryIcon ??
-    (budget.budgetCategoryId
-      ? "pie-chart-outline"
-      : "wallet-outline")) as keyof typeof Ionicons.glyphMap;
+    "pie-chart-outline") as keyof typeof Ionicons.glyphMap;
   const accent = overBudget
     ? colors.danger
     : (budget.budgetCategoryColor ?? colors.primary);
 
   return (
-    <Card
-      style={prominent ? { backgroundColor: colors.primarySoft } : undefined}
-    >
+    <Card>
       <Pressable
         accessibilityRole={onOpen ? "button" : undefined}
         accessibilityLabel={
@@ -83,10 +74,7 @@ export function BudgetProgressCard({
           <Text
             adjustsFontSizeToFit
             numberOfLines={1}
-            style={[
-              prominent ? styles.heroAmount : styles.remainingAmount,
-              { color: accent },
-            ]}
+            style={[styles.remainingAmount, { color: accent }]}
           >
             {formatMoney(
               Math.abs(remainingMinor),
@@ -120,38 +108,17 @@ export function BudgetProgressCard({
         </View>
       </Pressable>
       <View style={styles.cardActions}>
-        {onOpen ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`View ${title} transactions`}
-            hitSlop={8}
-            onPress={onOpen}
-          >
-            <Text style={[styles.actionText, { color: colors.primary }]}>
-              Transactions
-            </Text>
-          </Pressable>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${title}`}
-          hitSlop={8}
+        <IconButton
+          icon="create-outline"
+          label={`Edit ${title}`}
           onPress={onEdit}
-        >
-          <Text style={[styles.actionText, { color: colors.primary }]}>
-            Edit
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Delete ${title}`}
-          hitSlop={8}
+        />
+        <IconButton
+          icon="trash-outline"
+          label={`Delete ${title}`}
+          danger
           onPress={onDelete}
-        >
-          <Text style={[styles.actionText, { color: colors.danger }]}>
-            Delete
-          </Text>
-        </Pressable>
+        />
       </View>
     </Card>
   );
@@ -174,13 +141,6 @@ const styles = StyleSheet.create({
     alignItems: "baseline",
     gap: spacing.xs,
     marginTop: spacing.md,
-  },
-  heroAmount: {
-    flexShrink: 1,
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: "800",
-    fontVariant: ["tabular-nums"],
   },
   remainingAmount: {
     flexShrink: 1,
@@ -205,5 +165,4 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     marginTop: spacing.sm,
   },
-  actionText: { fontSize: 14, fontWeight: "700" },
 });

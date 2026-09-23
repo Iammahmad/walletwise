@@ -20,6 +20,63 @@ const geminiModel = defineString("GEMINI_MODEL", {
 });
 const aiRateLimit = defineInt("AI_RATE_LIMIT_PER_HOUR", { default: 30 });
 
+const callableInput = <T>(
+  schema: z.ZodType<T>,
+  data: unknown,
+  maxBytes: number,
+): T => {
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(data ?? null);
+  } catch {
+    throw new HttpsError("invalid-argument", "The request is not valid JSON.");
+  }
+  if (Buffer.byteLength(encoded, "utf8") > maxBytes) {
+    throw new HttpsError("invalid-argument", "The request is too large.");
+  }
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    throw new HttpsError("invalid-argument", "The request is invalid.");
+  }
+  return result.data;
+};
+
+async function enforceRateLimit(
+  uid: string,
+  action: string,
+  limit: number,
+  window: "hour" | "day",
+): Promise<void> {
+  const now = new Date();
+  const bucket =
+    window === "hour"
+      ? now.toISOString().slice(0, 13)
+      : now.toISOString().slice(0, 10);
+  const rateRef = db
+    .collection("users")
+    .doc(uid)
+    .collection("rateLimits")
+    .doc(`${action}-${bucket}`);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(rateRef);
+    const count = Number(snapshot.data()?.count ?? 0);
+    if (!Number.isSafeInteger(count) || count < 0 || count >= limit) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Too many requests. Try again later.",
+      );
+    }
+    transaction.set(
+      rateRef,
+      {
+        count: count + 1,
+        updated_at: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+}
+
 const requireUser = (auth: { uid: string } | undefined) => {
   if (!auth?.uid)
     throw new HttpsError("unauthenticated", "Sign in to continue.");
@@ -114,38 +171,48 @@ async function sendExpoNotifications(
   );
   await Promise.all(
     batches.map(async (batch) => {
-      const response = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "Accept-Encoding": "gzip, deflate",
-        },
-        body: JSON.stringify(
-          batch.map((to) => ({
-            to,
-            channelId: "splits",
-            sound: "default",
-            ...message,
-          })),
-        ),
-      });
-      if (!response.ok)
+      try {
+        const response = await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "Accept-Encoding": "gzip, deflate",
+          },
+          body: JSON.stringify(
+            batch.map((to) => ({
+              to,
+              channelId: "splits",
+              sound: "default",
+              ...message,
+            })),
+          ),
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (response.ok) return;
         console.error(
           JSON.stringify({ event: "push_failed", status: response.status }),
         );
+      } catch {
+        // Notification delivery is best-effort and must not roll back a
+        // successfully committed invitation or split.
+        console.error(JSON.stringify({ event: "push_failed" }));
+      }
     }),
   );
 }
 
 export const registerPushToken = onCall({ region }, async (request) => {
   const uid = requireUser(request.auth);
-  const input = z
-    .object({
+  await enforceRateLimit(uid, "push-token", 20, "hour");
+  const input = callableInput(
+    z.object({
       token: z.string().regex(/^(Exponent|Expo)PushToken\[[A-Za-z0-9_-]+\]$/),
       platform: z.enum(["android", "ios"]),
-    })
-    .parse(request.data);
+    }),
+    request.data,
+    4096,
+  );
   const id = createHash("sha256")
     .update(input.token)
     .digest("hex")
@@ -161,6 +228,8 @@ export const registerPushToken = onCall({ region }, async (request) => {
 
 export const createConnectionInvite = onCall({ region }, async (request) => {
   const uid = requireUser(request.auth);
+  callableInput(z.object({}).strict(), request.data, 1024);
+  await enforceRateLimit(uid, "connection-invite", 20, "day");
   const token = randomBytes(24).toString("base64url");
   await db
     .collection("connectionInvites")
@@ -176,9 +245,12 @@ export const createConnectionInvite = onCall({ region }, async (request) => {
 
 export const acceptConnectionInvite = onCall({ region }, async (request) => {
   const uid = requireUser(request.auth);
-  const { token } = z
-    .object({ token: z.string().regex(/^[A-Za-z0-9_-]{24,128}$/) })
-    .parse(request.data);
+  await enforceRateLimit(uid, "accept-invite", 30, "hour");
+  const { token } = callableInput(
+    z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{24,128}$/) }),
+    request.data,
+    4096,
+  );
   const inviteRef = db.collection("connectionInvites").doc(token);
   const result = await db.runTransaction(async (transaction) => {
     const invite = await transaction.get(inviteRef);
@@ -283,7 +355,18 @@ export const acceptConnectionInvite = onCall({ region }, async (request) => {
 
 export const upsertSplit = onCall({ region }, async (request) => {
   const uid = requireUser(request.auth);
-  const input = splitSchema.parse(request.data);
+  await enforceRateLimit(uid, "upsert-split", 120, "hour");
+  const input = callableInput(splitSchema, request.data, 64 * 1024);
+  const latestAllowed = Date.now() + 5 * 60 * 1000;
+  if (
+    Date.parse(input.created_at) > latestAllowed ||
+    Date.parse(input.updated_at) > latestAllowed
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Split timestamps cannot be in the future.",
+    );
+  }
   const participants = input.participants.map((item) => ({
     remote_user_id: item.is_owner ? uid : item.remote_user_id,
     display_name: item.display_name,
@@ -331,7 +414,7 @@ export const upsertSplit = onCall({ region }, async (request) => {
     }
     if (
       typeof data.updated_at === "string" &&
-      data.updated_at > input.updated_at
+      Date.parse(data.updated_at) > Date.parse(input.updated_at)
     )
       return { saved: false };
   }
@@ -383,6 +466,7 @@ const aiTransactionSchema = z.object({
   type: z.enum(["expense", "income"]),
   amount: z
     .string()
+    .max(32)
     .regex(/^\d+(?:\.\d+)?$/)
     .nullable(),
   currency: z
@@ -457,27 +541,13 @@ export const parseTranscript = onCall(
   { region, secrets: [geminiApiKey], timeoutSeconds: 20 },
   async (request) => {
     const uid = requireUser(request.auth);
-    const input = aiRequestSchema.parse(request.data);
-    const hour = new Date().toISOString().slice(0, 13);
-    const rateRef = db
-      .collection("users")
-      .doc(uid)
-      .collection("rateLimits")
-      .doc(`ai-${hour}`);
-    await db.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(rateRef);
-      const count = Number(snapshot.data()?.count ?? 0);
-      if (count >= Math.min(Math.max(aiRateLimit.value(), 1), 100))
-        throw new HttpsError(
-          "resource-exhausted",
-          "Cloud AI rate limit reached. Try again later.",
-        );
-      transaction.set(
-        rateRef,
-        { count: count + 1, updated_at: FieldValue.serverTimestamp() },
-        { merge: true },
-      );
-    });
+    const input = callableInput(aiRequestSchema, request.data, 32 * 1024);
+    await enforceRateLimit(
+      uid,
+      "ai",
+      Math.min(Math.max(aiRateLimit.value(), 1), 100),
+      "hour",
+    );
     const prompt = `You parse English personal-finance voice commands into JSON.
 Never invent amounts, dates, merchants, currencies, accounts, or categories. Unknown values must be null.
 Use only these accounts: ${JSON.stringify(input.accounts)}.
@@ -496,6 +566,7 @@ Transcript: ${JSON.stringify(input.transcript)}`;
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0,
+            maxOutputTokens: 2048,
             responseMimeType: "application/json",
             responseJsonSchema: aiOutputJsonSchema,
           },
@@ -508,15 +579,36 @@ Transcript: ${JSON.stringify(input.transcript)}`;
         "unavailable",
         "The AI provider is temporarily unavailable.",
       );
-    const provider = (await response.json()) as {
+    const providerText = await response.text();
+    if (Buffer.byteLength(providerText, "utf8") > 128 * 1024) {
+      throw new HttpsError(
+        "data-loss",
+        "The AI provider returned an oversized response.",
+      );
+    }
+    let provider: {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
     };
+    try {
+      provider = JSON.parse(providerText) as typeof provider;
+    } catch {
+      throw new HttpsError(
+        "data-loss",
+        "The AI provider returned invalid JSON.",
+      );
+    }
     const text = provider.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text)
       throw new HttpsError(
         "data-loss",
         "The AI provider returned an empty response.",
       );
+    if (Buffer.byteLength(text, "utf8") > 64 * 1024) {
+      throw new HttpsError(
+        "data-loss",
+        "The AI provider returned an oversized result.",
+      );
+    }
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -532,7 +624,21 @@ Transcript: ${JSON.stringify(input.transcript)}`;
 
 export const deleteAccount = onCall({ region }, async (request) => {
   const uid = requireUser(request.auth);
-  z.object({ confirmation: z.literal("DELETE") }).parse(request.data);
+  const authTime = Number(request.auth?.token.auth_time);
+  if (
+    !Number.isFinite(authTime) ||
+    Math.floor(Date.now() / 1000) - authTime > 10 * 60
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Sign in again before deleting your account.",
+    );
+  }
+  callableInput(
+    z.object({ confirmation: z.literal("DELETE") }).strict(),
+    request.data,
+    1024,
+  );
   const [sharedSplits, connections, createdInvites, acceptedInvites] =
     await Promise.all([
       db

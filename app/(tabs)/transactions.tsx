@@ -235,14 +235,14 @@ export default function TransactionsScreen() {
           />
         ))}
         <FilterChip
-          label="All dates"
+          label={dateScope === "all" ? "All time" : "Selected month"}
           selected={dateScope === "all"}
           onPress={() =>
             setDateScope((value) => (value === "month" ? "all" : "month"))
           }
         />
         <FilterChip
-          label={grouping === "daily" ? "Group daily" : "Group monthly"}
+          label={grouping === "daily" ? "View: Daily" : "View: Monthly"}
           selected={grouping === "monthly"}
           onPress={() =>
             setGrouping((value) => (value === "daily" ? "monthly" : "daily"))
@@ -251,9 +251,8 @@ export default function TransactionsScreen() {
         <FilterChip
           label={
             accountId === "all"
-              ? "Account"
-              : (accounts.find((item) => item.id === accountId)?.name ??
-                "Account")
+              ? "All accounts"
+              : `Account: ${accounts.find((item) => item.id === accountId)?.name ?? "Unknown"}`
           }
           selected={accountId !== "all"}
           onPress={() => setSheet("account")}

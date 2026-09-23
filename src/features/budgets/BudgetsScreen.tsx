@@ -58,9 +58,6 @@ export default function BudgetsScreen() {
   });
   const [editing, setEditing] = useState<Budget | "new" | null>(null);
 
-  const overall = data.progress.find(
-    (item) => item.budget.budgetCategoryId == null,
-  );
   const categoryProgress = data.progress.filter(
     (item) => item.budget.budgetCategoryId != null,
   );
@@ -70,7 +67,7 @@ export default function BudgetsScreen() {
   const availableCategories = data.categories.filter(
     (category) => !usedCategoryIds.has(category.id),
   );
-  const canCreate = !overall || availableCategories.length > 0;
+  const canCreate = availableCategories.length > 0;
   const monthLabel = formatMonthStart(selectedMonthStart, profile.locale);
 
   const remove = (budget: Budget) =>
@@ -107,7 +104,7 @@ export default function BudgetsScreen() {
   return (
     <Screen
       title="Budget dashboard"
-      subtitle="See what is left overall and inside each budget category."
+      subtitle="Track a separate monthly limit for each budget category."
       action={
         <Button
           label="New"
@@ -140,80 +137,45 @@ export default function BudgetsScreen() {
         <FeedbackState
           kind="empty"
           title={`No budgets for ${monthLabel}`}
-          message="Create an overall budget or a category limit specifically for this month."
+          message="Create a category budget specifically for this month."
           actionLabel="Create a budget"
           onAction={() => setEditing("new")}
         />
       ) : (
-        <>
-          <View style={styles.section}>
-            <Text
-              accessibilityRole="header"
-              style={[styles.sectionTitle, { color: colors.textMuted }]}
-            >
-              Overall budget
-            </Text>
-            {overall ? (
+        <View style={styles.section}>
+          <Text
+            accessibilityRole="header"
+            style={[styles.sectionTitle, { color: colors.textMuted }]}
+          >
+            Category budgets
+          </Text>
+          {categoryProgress.length ? (
+            categoryProgress.map((item) => (
               <BudgetProgressCard
-                progress={overall}
-                prominent
-                onEdit={() => setEditing(overall.budget)}
-                onDelete={() => remove(overall.budget)}
+                key={item.budget.id}
+                progress={item}
+                onOpen={() => openTransactions(item.budget)}
+                onEdit={() => setEditing(item.budget)}
+                onDelete={() => remove(item.budget)}
               />
-            ) : (
-              <Card style={styles.missingCard}>
-                <View style={styles.missingText}>
-                  <Text style={[styles.cardTitle, { color: colors.text }]}>
-                    No overall limit
-                  </Text>
-                  <Text style={[styles.meta, { color: colors.textMuted }]}>
-                    Category budgets still work independently.
-                  </Text>
-                </View>
-                <Button
-                  label="Add"
-                  variant="secondary"
-                  onPress={() => setEditing("new")}
-                />
-              </Card>
-            )}
-          </View>
-          <View style={styles.section}>
-            <Text
-              accessibilityRole="header"
-              style={[styles.sectionTitle, { color: colors.textMuted }]}
-            >
-              Category budgets
-            </Text>
-            {categoryProgress.length ? (
-              categoryProgress.map((item) => (
-                <BudgetProgressCard
-                  key={item.budget.id}
-                  progress={item}
-                  onOpen={() => openTransactions(item.budget)}
-                  onEdit={() => setEditing(item.budget)}
-                  onDelete={() => remove(item.budget)}
-                />
-              ))
-            ) : (
-              <Card>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  No category limits yet
-                </Text>
-                <Text style={[styles.meta, { color: colors.textMuted }]}>
-                  Add one to track what remains for a specific budget category.
-                </Text>
-              </Card>
-            )}
-          </View>
-        </>
+            ))
+          ) : (
+            <Card>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>
+                No category limits yet
+              </Text>
+              <Text style={[styles.meta, { color: colors.textMuted }]}>
+                Add one to track what remains for a specific budget category.
+              </Text>
+            </Card>
+          )}
+        </View>
       )}
       {editing ? (
         <BudgetModal
           key={editing === "new" ? "new" : editing.id}
           budget={editing === "new" ? null : editing}
           categories={editing === "new" ? availableCategories : data.categories}
-          allowOverall={editing !== "new" || !overall}
           monthStart={selectedMonthStart}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -234,8 +196,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
     fontWeight: "700",
   },
-  missingCard: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  missingText: { flex: 1 },
   cardTitle: { fontSize: 16, fontWeight: "700" },
   meta: { fontSize: 13, lineHeight: 19, marginTop: 3 },
 });

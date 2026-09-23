@@ -144,11 +144,6 @@ describe("budget progress repository", () => {
       ),
     ).resolves.toEqual([
       expect.objectContaining({
-        spentMinor: 45000,
-        remainingMinor: 55000,
-        budget: expect.objectContaining({ id: "overall" }),
-      }),
-      expect.objectContaining({
         spentMinor: 30000,
         remainingMinor: 10000,
         budget: expect.objectContaining({ id: "food" }),
@@ -161,15 +156,13 @@ describe("budget progress repository", () => {
     ]);
   });
 
-  it("loads the Home overall budget for the exact current month only", async () => {
+  it("loads Home totals without querying an overall budget", async () => {
     const db = {
       getAllAsync: jest.fn(async () => []),
       getFirstAsync: jest.fn(async (sql: string, ..._params: unknown[]) => {
         if (sql.includes("FROM local_profile")) return profile;
         if (sql.includes("CASE WHEN type"))
           return { spending_minor: 25000, income_minor: 100000 };
-        if (sql.includes("SELECT amount_minor FROM budgets"))
-          return { amount_minor: 80000 };
         return null;
       }),
     };
@@ -179,18 +172,15 @@ describe("budget progress repository", () => {
       getDashboardSummary(
         "2026-08-31T19:00:00.000Z",
         "2026-09-30T19:00:00.000Z",
-        "2026-09-01",
       ),
     ).resolves.toMatchObject({
       spendingMinor: 25000,
       incomeMinor: 100000,
-      budgetMinor: 80000,
     });
 
-    const budgetQuery = db.getFirstAsync.mock.calls.find(([sql]) =>
-      String(sql).includes("SELECT amount_minor FROM budgets"),
+    expect(db.getFirstAsync).not.toHaveBeenCalledWith(
+      expect.stringContaining("FROM budgets"),
+      expect.anything(),
     );
-    expect(budgetQuery?.[0]).toContain("start_date = ?");
-    expect(budgetQuery?.[3]).toBe("2026-09-01");
   });
 });

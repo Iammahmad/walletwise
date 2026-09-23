@@ -2,12 +2,14 @@ import * as Crypto from "expo-crypto";
 
 import { getLocalOwnerContext, queueCloudWrite } from "@/src/db/localCloud";
 import { splitInputSchema } from "@/src/domain/schemas";
+import { validateSettlement } from "./calculations";
 import type {
   ContactBalance,
   SplitContact,
   SplitEntry,
   SplitInput,
   SplitParticipant,
+  SplitSettlement,
 } from "@/src/domain/types";
 
 type Row = Record<string, string | number | null>;
@@ -73,6 +75,27 @@ function mapSplit(row: Row, participants: SplitParticipant[]): SplitEntry {
     localUpdatedAt: string(row, "local_updated_at"),
     lastSyncedAt: nullable(row, "last_synced_at"),
     participants,
+  };
+}
+
+function mapSettlement(row: Row): SplitSettlement {
+  return {
+    id: string(row, "id"),
+    userId: nullable(row, "user_id"),
+    localOwnerId: string(row, "local_owner_id"),
+    splitId: nullable(row, "split_id"),
+    contactId: string(row, "contact_id"),
+    direction: string(row, "direction") as SplitSettlement["direction"],
+    amountMinor: Number(row.amount_minor),
+    currency: string(row, "currency"),
+    occurredAt: string(row, "occurred_at"),
+    note: nullable(row, "note"),
+    createdAt: string(row, "created_at"),
+    updatedAt: string(row, "updated_at"),
+    deletedAt: nullable(row, "deleted_at"),
+    syncStatus: string(row, "sync_status") as SplitSettlement["syncStatus"],
+    localUpdatedAt: string(row, "local_updated_at"),
+    lastSyncedAt: nullable(row, "last_synced_at"),
   };
 }
 
@@ -232,6 +255,52 @@ export async function listSplits(limit = 100): Promise<SplitEntry[]> {
   );
 }
 
+export async function listSplitSettlements(
+  splitId: string,
+): Promise<SplitSettlement[]> {
+  const { db, ownerId } = await getLocalOwnerContext();
+  const rows = await db.getAllAsync<Row>(
+    `SELECT * FROM split_settlements
+     WHERE split_id = ? AND local_owner_id = ? AND deleted_at IS NULL
+     ORDER BY occurred_at DESC, created_at DESC`,
+    splitId,
+    ownerId,
+  );
+  return rows.map(mapSettlement);
+}
+
+async function outstandingForContact(
+  db: Awaited<ReturnType<typeof getLocalOwnerContext>>["db"],
+  ownerId: string,
+  contactId: string,
+  splitId: string | null,
+): Promise<number> {
+  const participant = await db.getFirstAsync<{ balance: number }>(
+    `SELECT COALESCE(SUM(sp.share_minor - sp.paid_minor), 0) AS balance
+     FROM split_participants sp
+     JOIN splits s ON s.id = sp.split_id
+     WHERE sp.contact_id = ? AND s.local_owner_id = ? AND s.deleted_at IS NULL
+       AND (? IS NULL OR s.id = ?)`,
+    contactId,
+    ownerId,
+    splitId,
+    splitId,
+  );
+  const settlements = await db.getFirstAsync<{ adjustment: number }>(
+    `SELECT COALESCE(SUM(CASE direction WHEN 'received' THEN -amount_minor ELSE amount_minor END), 0) AS adjustment
+     FROM split_settlements
+     WHERE contact_id = ? AND local_owner_id = ? AND deleted_at IS NULL
+       AND (? IS NULL OR split_id = ?)`,
+    contactId,
+    ownerId,
+    splitId,
+    splitId,
+  );
+  return (
+    Number(participant?.balance ?? 0) + Number(settlements?.adjustment ?? 0)
+  );
+}
+
 export async function saveSettlement(input: {
   splitId?: string | null;
   contactId: string;
@@ -241,12 +310,39 @@ export async function saveSettlement(input: {
   occurredAt: string;
   note?: string | null;
 }): Promise<void> {
-  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0)
-    throw new Error("Enter a valid settlement amount.");
   const { db, ownerId, userId, syncStatus } = await getLocalOwnerContext();
   const id = Crypto.randomUUID();
   const now = new Date().toISOString();
   await db.withTransactionAsync(async () => {
+    const contact = await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM split_contacts WHERE id = ? AND local_owner_id = ? AND deleted_at IS NULL",
+      input.contactId,
+      ownerId,
+    );
+    if (!contact) throw new Error("This friend could not be found.");
+    const splitId = input.splitId ?? null;
+    if (splitId) {
+      const split = await db.getFirstAsync<{ currency: string }>(
+        `SELECT s.currency
+         FROM splits s
+         JOIN split_participants sp ON sp.split_id = s.id
+         WHERE s.id = ? AND s.local_owner_id = ? AND s.deleted_at IS NULL
+           AND sp.contact_id = ?`,
+        splitId,
+        ownerId,
+        input.contactId,
+      );
+      if (!split) throw new Error("This friend is not part of the split.");
+      if (split.currency !== input.currency)
+        throw new Error("The settlement currency must match the split.");
+    }
+    const outstanding = await outstandingForContact(
+      db,
+      ownerId,
+      input.contactId,
+      splitId,
+    );
+    validateSettlement(outstanding, input.direction, input.amountMinor);
     await db.runAsync(
       `INSERT INTO split_settlements
         (id, user_id, local_owner_id, split_id, contact_id, direction, amount_minor, currency,
@@ -255,7 +351,7 @@ export async function saveSettlement(input: {
       id,
       userId,
       ownerId,
-      input.splitId ?? null,
+      splitId,
       input.contactId,
       input.direction,
       input.amountMinor,
@@ -268,6 +364,37 @@ export async function saveSettlement(input: {
       now,
     );
     await queueCloudWrite(db, userId, "split_settlements", id, now);
+    if (splitId) {
+      const balances = await db.getAllAsync<{ balance: number }>(
+        `SELECT sp.share_minor - sp.paid_minor +
+                COALESCE(SUM(CASE ss.direction WHEN 'received' THEN -ss.amount_minor ELSE ss.amount_minor END), 0) AS balance
+         FROM split_participants sp
+         JOIN splits s ON s.id = sp.split_id
+         LEFT JOIN split_settlements ss ON ss.split_id = s.id
+           AND ss.contact_id = sp.contact_id AND ss.deleted_at IS NULL
+         WHERE s.id = ? AND s.local_owner_id = ? AND s.deleted_at IS NULL
+           AND sp.is_owner = 0
+         GROUP BY sp.id, sp.share_minor, sp.paid_minor`,
+        splitId,
+        ownerId,
+      );
+      const status =
+        balances.length > 0 &&
+        balances.every((row) => Number(row.balance) === 0)
+          ? "settled"
+          : "open";
+      await db.runAsync(
+        `UPDATE splits SET status = ?, updated_at = ?, local_updated_at = ?, sync_status = ?
+         WHERE id = ? AND local_owner_id = ?`,
+        status,
+        now,
+        now,
+        syncStatus,
+        splitId,
+        ownerId,
+      );
+      await queueCloudWrite(db, userId, "splits", splitId, now);
+    }
   });
 }
 

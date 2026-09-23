@@ -119,27 +119,46 @@ export async function listSavings(
     clauses.push("occurred_at < ?");
     params.push(options.dateTo);
   }
-  const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
-  params.push(limit);
+  const limit = options.limit
+    ? Math.max(1, Math.min(options.limit, 1000))
+    : null;
+  if (limit) params.push(limit);
   const rows = await db.getAllAsync<SavingRow>(
-    `SELECT * FROM savings WHERE ${clauses.join(" AND ")} ORDER BY occurred_at DESC, created_at DESC LIMIT ?`,
+    `SELECT * FROM savings WHERE ${clauses.join(" AND ")} ORDER BY occurred_at DESC, created_at DESC${limit ? " LIMIT ?" : ""}`,
     ...params,
   );
   return rows.map(mapSaving);
 }
 
+export async function getSavingsTotals(): Promise<Record<string, number>> {
+  const { db, ownerId } = await getLocalOwnerContext();
+  const rows = await db.getAllAsync<{ currency: string; total: number }>(
+    `SELECT currency, COALESCE(SUM(amount_minor), 0) AS total
+     FROM savings
+     WHERE local_owner_id = ? AND deleted_at IS NULL
+     GROUP BY currency ORDER BY currency`,
+    ownerId,
+  );
+  return Object.fromEntries(
+    rows.map((row) => [row.currency, Number(row.total)]),
+  );
+}
+
 export async function getSavingsTotal(
   dateFrom: string,
   dateTo: string,
+  currency: string,
 ): Promise<number> {
   const { db, ownerId } = await getLocalOwnerContext();
   const row = await db.getFirstAsync<{ total: number }>(
     `SELECT COALESCE(SUM(amount_minor), 0) AS total
      FROM savings
-     WHERE local_owner_id = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?`,
+     WHERE local_owner_id = ? AND deleted_at IS NULL AND occurred_at >= ? AND occurred_at < ?
+       AND currency = ?`,
     ownerId,
     dateFrom,
     dateTo,
+    currency,
   );
   return Number(row?.total ?? 0);
 }

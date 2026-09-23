@@ -3,6 +3,7 @@ import { useState } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import { Card } from "@/src/components/Card";
+import { EntryTypeTabs, type EntryType } from "@/src/components/EntryTypeTabs";
 import { FeedbackState } from "@/src/components/FeedbackState";
 import { Screen } from "@/src/components/Screen";
 import { TransactionForm } from "@/src/components/TransactionForm";
@@ -19,6 +20,7 @@ export default function ReviewScreen() {
   const clear = useAppStore((state) => state.clearVoiceReview);
   const bump = useAppStore((state) => state.bumpDbRevision);
   const [index, setIndex] = useState(0);
+  const [types, setTypes] = useState<Record<string, EntryType>>({});
   const draft = drafts[index];
   if (!draft)
     return (
@@ -33,6 +35,7 @@ export default function ReviewScreen() {
       </Screen>
     );
   const missing = draft.lowConfidenceFields;
+  const selectedType = types[draft.id] ?? draft.type;
   return (
     <Screen
       title={
@@ -64,9 +67,16 @@ export default function ReviewScreen() {
           </Text>
         </Card>
       )}
+      <EntryTypeTabs
+        value={selectedType}
+        onChange={(value) =>
+          setTypes((current) => ({ ...current, [draft.id]: value }))
+        }
+      />
       <TransactionForm
-        key={draft.id}
+        key={`${draft.id}-${selectedType}`}
         source="voice"
+        selectedType={selectedType === "income" ? "income" : "expense"}
         originalTranscript={transcript}
         preset={{
           type: draft.type,

@@ -347,7 +347,7 @@ Acceptance checks:
 Deliverables:
 
 - Query month-to-date expense and income totals using the configured timezone.
-- Display remaining overall monthly budget when configured.
+- Display monthly Money left as income minus spending; do not use an overall-budget record.
 - Display recent transactions and spending by category with accessible labels and a non-chart fallback/list.
 - Add prominent microphone and quick manual expense actions wired to real routes.
 - Add skeleton/loading, empty, offline, and recoverable error states.
@@ -537,7 +537,7 @@ All eight vertical slices are implemented in the repository. SpendSpeak is usabl
 | --------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1. Foundation                     | Complete                                            | Expo SDK 57, strict TypeScript, Expo Router, light/dark design tokens, reusable UI, SQLite migrations, onboarding, configurable currency/locale/timezone, seeded Cash/Bank accounts, and default categories.                                        |
 | 2. Transactions                   | Complete                                            | Manual expense/income creation, editing, soft deletion, undo, search, filters, date grouping, source labels, and validated precise-money entry.                                                                                                     |
-| 3. Home                           | Complete                                            | Month expense/income totals, remaining overall budget, recent transactions, category spending, quick manual entry, microphone entry, and empty/loading/offline/error handling.                                                                      |
+| 3. Home                           | Complete                                            | Month expense/income totals, Money left, recent transactions, category spending, monthly savings total, quick manual entry, microphone entry, and empty/loading/offline/error handling.                                                             |
 | 4. Native voice                   | Complete in code; device verification ongoing       | Native `SFSpeechRecognizer`/Android `SpeechRecognizer`, development-build configuration, permission handling, interim transcript, recording controls, silence handling, lifecycle cleanup, processing states, and mandatory review.                 |
 | 5. Local parser                   | Complete                                            | English expense/income commands, digit and spoken-number amounts, currencies, accounts, merchants, categories, multiple transactions, reviewed delete commands, relative dates, weekdays, ordinal dates, month names, and validated explicit dates. |
 | 6. Optional AI                    | Complete in code; deployment verification pending   | Authenticated Supabase Edge Function, Gemini structured JSON, non-invention prompt, Zod validation, request limit, rate limiting, redacted logging, timeout/error handling, and safe client fallback.                                               |
@@ -815,7 +815,7 @@ Implemented initially on **2026-09-18** and corrected to the final same-name-onl
 - **Automatic** uses one simple rule: an expense counts toward an active budget category whose name matches the transaction category case-insensitively. `Spent 600 on Food` therefore counts toward Food only when a Food budget exists; otherwise it remains a regular transaction.
 - A separate budget such as Household can receive any expense through an explicit manual selection or a spoken phrase such as `Spent 600 on Food in Household budget`. The explicit choice counts only in Household.
 - **No budget** excludes the expense from category-budget totals.
-- The overall monthly budget continues to include every expense, including expenses excluded from category budgets.
+- Legacy overall-budget records are retired; only independently managed category budgets are displayed or calculated.
 - Budget drill-down uses the same automatic/explicit rules as progress calculations, so each card shows the exact transactions responsible for its total.
 - The budget editor explains the same-name rule and no longer presents transaction-category membership checkboxes.
 
@@ -961,7 +961,7 @@ Connected WalletWise to Firebase project **`budgetwise-f90a8`** on **2026-09-22*
 
 - Protected Cloud Functions could not be deployed because `budgetwise-f90a8` is still on the Spark plan. Firebase requires an explicit Blaze upgrade before Cloud Build and Artifact Registry can be enabled. No billing change was attempted automatically.
 - The owner chose to remain on Spark. `EXPO_PUBLIC_FIREBASE_FUNCTIONS_ENABLED=false` now makes this an intentional application mode: connected invitations/shared uploads, server push registration, and optional Gemini parsing are visibly disabled instead of failing at runtime.
-- Fixed private synchronization so Functions being disabled no longer blocks expenses, income, categories, accounts, budgets, savings, local contacts, or settlements from backing up to the authenticated user's Firestore tree. Shared split writes remain safely queued for a possible future upgrade.
+- Fixed private synchronization so Functions being disabled no longer blocks expenses, income, categories, accounts, budgets, savings, contacts, Splits, or settlements from backing up to the authenticated user's Firestore tree. Cross-user shared delivery remains disabled.
 - Added a Spark-compatible account deletion path that removes the authenticated user's known private collections, profile document, and Firebase Auth identity. The deployed Firestore rules permit delete only inside the caller's own `users/{uid}` tree; shared server records cannot exist while connected sharing is disabled.
 - Added test coverage for free-mode private sync and account deletion. Final verification is **14 of 14 suites** and **83 of 83 tests**, with strict TypeScript, ESLint, and the Functions TypeScript build passing.
 - If the owner later upgrades the project, set `GEMINI_API_KEY` through Firebase Secret Manager, deploy Functions, set the Functions-enabled flag to `true`, and rebuild the app.
@@ -987,6 +987,57 @@ Completed successfully on **2026-09-23**.
 
 Release verification before submission passed strict TypeScript, ESLint, **14 of 14 test suites**, **83 of 83 tests**, the Firebase Functions TypeScript build, Expo SDK 57 dependency validation, native Expo configuration resolution, and the Android Hermes production export. EAS completed native compilation and signing with the existing remote Android keystore.
 
-This build intentionally uses Firebase Spark mode. Local finance, budgets, savings, local splits, Firebase Authentication, and private Firestore backup remain available. Callable-Function features (connected split invitations/shared split uploads, push-token registration, and Gemini parsing) remain visibly disabled until a future Blaze upgrade and Function deployment. Physical Android verification is still required for upgrade data preservation, speech recognition, Google Sign-In, private sync, and the complete WalletWise v2 interface.
+This build intentionally uses Firebase Spark mode. Local finance, budgets, savings, Splits, Firebase Authentication, and private Firestore backup remain available. Callable-Function features (connected split invitations, push-token registration, and Gemini parsing) remain disabled until a future Blaze upgrade, Function deployment, and an intentional client re-enable. Physical Android verification is still required for upgrade data preservation, speech recognition, Google Sign-In, private sync, and the complete WalletWise v2 interface.
 
 The obsolete `EXPO_PUBLIC_SUPABASE_URL` entry was removed from the remote EAS preview environment after the build. The obsolete sensitive `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` entry remains because remote-secret deletion requires separate explicit authorization; WalletWise v2 does not read or use it.
+
+## 27. WalletWise usability, budgets, savings, and Splits revision
+
+Implemented on **2026-09-23** after the v2.0.0 build 5 APK was produced. These changes are present in source and require a new preview APK before physical-device verification.
+
+### Global behavior and onboarding
+
+- Every screen built on the shared `Screen` component now supports native pull-to-refresh with a visible loading spinner. A signed-in refresh synchronizes Firebase first, then invalidates local queries; a local-only refresh simply reloads SQLite-backed data.
+- Consolidated repeated guidance into the first-install onboarding. It now explains reviewed microphone entry, example category/budget/multiple-entry speech formats, the one-budget-per-expense rule, independent Savings/Splits behavior, refresh, private backup, and currently unavailable invitations/notifications.
+- Removed repeated instructional cards and subtitles from Splits, Savings, transaction-category, and budget-category workflows where the information is no longer needed during routine use.
+
+### Home, Activity, and entry forms
+
+- Home retains monthly Income and Spent, uses shrink-safe value layout for large amounts, displays **Money left** as income minus spending, removes Budget Left, and keeps one monthly Savings total.
+- The Home action shows the current Firebase/Google profile image when available and falls back to the WalletWise person icon.
+- Activity rows no longer expose budget assignment. Date, grouping, and account filter labels are now **All time/Selected month**, **View: Daily/View: Monthly**, and **All accounts/Account: name**.
+- New manual entries start with Category and Budget unselected. Expense/Income/Savings selection remains in the top bar, with the duplicate in-form transaction-type toggle removed from create, edit, and voice-review forms.
+
+### Category budgets and Savings
+
+- Removed Overall Monthly Budget from setup, Home, repositories, progress calculations, and remote validation. SQLite migration **5** soft-deletes legacy overall-budget rows, and category-budget queries ignore them.
+- A budget card itself opens its transactions. The dedicated Transactions button was removed, and edit/delete actions use accessible WalletWise icon buttons.
+- The dedicated Savings screen now covers the complete savings history: all-time totals at the top, an all-history month chart, totals for each currency, and entries grouped month by month.
+
+### Splits and private Firebase backup
+
+- Splits, contacts, and settlements remain independent of transactions, accounts, savings, and budgets, but signed-in records now synchronize privately under `users/{uid}` in Firestore even on the free Spark plan.
+- Creating a Split and confirming a settlement both return to the Splits dashboard. Tapping a friend or recent Split continues to open its detail view.
+- WhatsApp invitation and notification actions are removed from the current UI and remain disabled. Splits UI no longer shows local/synced tags; Settings now shows **App mode** as Firebase-connected or local-only.
+- Partial and full settlements are validated against the live outstanding balance. The repository rejects wrong-direction settlements and overpayment, recalculates open/settled status, queues both settlement and Split updates, and preserves exact integer minor-unit accounting.
+- Split Details aggregates settlement payments into each participant, replaces Share with **Owe**, shows the updated outstanding balance, and includes settlement history. A borrowed 5,000 balance settled by 500 therefore shows the owner as paid 500 and owing 4,500.
+- Split deletion uses a WalletWise in-app confirmation dialog that names the Split and provides Cancel/Delete actions; the system warning dialog and finance-separation copy were removed.
+
+### Verification status
+
+- `npm run check` passes strict TypeScript, ESLint, **14 of 14 Jest suites**, and **85 of 85 tests**.
+- The Firebase Functions TypeScript build passes.
+- `npx expo install --check` confirms every dependency matches Expo SDK 57.
+- `git diff --check` passes with no whitespace errors. Git's Windows line-ending notices are informational only.
+
+## 28. GitHub credential hygiene
+
+Completed on **2026-09-23** before the next GitHub update.
+
+- Expanded `.gitignore` coverage for real environment files, Firebase platform configuration, Firebase CLI project state, service-account JSON, Admin SDK credentials, signing/provisioning keys, npm/netrc/Sentry credentials, credential/secret directories, local databases, financial CSV exports, emulator exports, generated Functions output, logs, and release binaries.
+- Kept safe templates such as `.env.example` and `.firebaserc.example` tracked.
+- Removed `.firebaserc` and `google-services.json` from Git tracking while preserving both local files for Firebase CLI and Android builds.
+- Removed hard-coded Firebase and OAuth configuration from `eas.json`. Preview and production builds now use the named EAS environments configured outside the repository.
+- Updated `app.config.ts` to consume the EAS secret file variable `GOOGLE_SERVICES_JSON`, with the ignored root file retained as the local-build fallback. All three EAS profiles now select an explicit environment.
+- A tracked-file scan found no private-key blocks, JWTs, provider-token formats, or real secret assignments. The only secret-name assignment reported is the documented `replace_me` placeholder in `.env.example`.
+- The existing `f9146b9` commit on `origin/main` previously included Firebase mobile client configuration. Firebase mobile API keys are public identifiers and authorization remains enforced by Firestore Rules, but fully removing that historical file would require an explicit history rewrite and force-push. The next normal commit removes it from the current tree.

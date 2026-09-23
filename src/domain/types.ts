@@ -201,7 +201,6 @@ export type VoiceState =
 export interface DashboardSummary {
   spendingMinor: number;
   incomeMinor: number;
-  budgetMinor: number | null;
   categoryTotals: {
     categoryId: string;
     name: string;

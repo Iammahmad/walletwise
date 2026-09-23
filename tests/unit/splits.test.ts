@@ -3,6 +3,8 @@ import {
   allocateEqualShares,
   applySettlement,
   calculateParticipantBalance,
+  settlementDirectionForBalance,
+  validateSettlement,
 } from "@/src/features/splits/calculations";
 
 describe("split calculations", () => {
@@ -17,6 +19,19 @@ describe("split calculations", () => {
     expect(calculateParticipantBalance(0, 6000)).toBe(-6000);
     expect(applySettlement(6000, "received", 2500)).toBe(3500);
     expect(applySettlement(-6000, "paid", 2500)).toBe(-3500);
+  });
+
+  it("allows partial and full settlements but rejects overpayment", () => {
+    expect(settlementDirectionForBalance(5000)).toBe("received");
+    expect(settlementDirectionForBalance(-5000)).toBe("paid");
+    expect(() => validateSettlement(-5000, "paid", 500)).not.toThrow();
+    expect(() => validateSettlement(-5000, "paid", 5000)).not.toThrow();
+    expect(() => validateSettlement(-5000, "paid", 5001)).toThrow(
+      "cannot exceed",
+    );
+    expect(() => validateSettlement(-5000, "received", 500)).toThrow(
+      "direction",
+    );
   });
 
   it("requires exactly one owner and balanced shares and payments", () => {

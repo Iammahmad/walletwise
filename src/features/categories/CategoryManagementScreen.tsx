@@ -19,7 +19,6 @@ import { CategoryAppearanceFields } from "./CategoryAppearanceFields";
 import { type CategoryColor, type CategoryIcon } from "./categoryOptions";
 
 export default function CategoryManagementScreen() {
-  const { colors } = useTheme();
   const bump = useAppStore((state) => state.bumpDbRevision);
   const loader = useCallback(() => listCategories(), []);
   const { data, loading, error, reload } = useReloadable<Category[]>(
@@ -31,7 +30,7 @@ export default function CategoryManagementScreen() {
   return (
     <Screen
       title="Transaction categories"
-      subtitle="Organize expenses and income. A same-name budget matches expenses automatically; other budgets can be selected explicitly."
+      subtitle="Organize expense and income labels."
       action={
         <Button
           label="New"
@@ -41,14 +40,6 @@ export default function CategoryManagementScreen() {
         />
       }
     >
-      <Card style={{ backgroundColor: colors.primarySoft }}>
-        <Text style={[styles.helperTitle, { color: colors.primary }]}>
-          Available everywhere
-        </Text>
-        <Text style={[styles.helperBody, { color: colors.text }]}>
-          Custom categories appear in manual entry, filters, and voice review.
-        </Text>
-      </Card>
       {loading ? (
         <FeedbackState kind="loading" />
       ) : error ? (
@@ -265,8 +256,6 @@ function CategoryModal({
 }
 
 const styles = StyleSheet.create({
-  helperTitle: { fontSize: 15, fontWeight: "700" },
-  helperBody: { fontSize: 13, lineHeight: 19, marginTop: spacing.xs },
   section: { gap: spacing.xs },
   sectionTitle: {
     fontSize: 12,

@@ -347,6 +347,16 @@ CREATE INDEX IF NOT EXISTS idx_outbox_retry ON sync_outbox(user_id, next_retry_a
 PRAGMA user_version = 4;
 `;
 
+const MIGRATION_5 = `
+UPDATE budgets
+SET deleted_at = COALESCE(deleted_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    local_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    sync_status = CASE WHEN user_id IS NULL THEN 'local' ELSE 'pending' END
+WHERE budget_category_id IS NULL AND deleted_at IS NULL;
+PRAGMA user_version = 5;
+`;
+
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>(
     "PRAGMA user_version",
@@ -356,6 +366,7 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   if (version < 2) await db.execAsync(MIGRATION_2);
   if (version < 3) await db.execAsync(MIGRATION_3);
   if (version < 4) await db.execAsync(MIGRATION_4);
+  if (version < 5) await db.execAsync(MIGRATION_5);
 }
 
 async function seed(db: SQLite.SQLiteDatabase): Promise<void> {

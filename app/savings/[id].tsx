@@ -43,7 +43,7 @@ export default function EditSavingScreen() {
   const remove = () =>
     Alert.alert(
       "Delete savings entry?",
-      "This removes the tracked contribution. It does not change transactions or budgets.",
+      `Delete “${data.name}” from your savings history?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -66,10 +66,7 @@ export default function EditSavingScreen() {
     );
 
   return (
-    <Screen
-      title="Edit savings"
-      subtitle="Savings remain separate from your ledger."
-    >
+    <Screen title="Edit savings">
       <SavingForm
         preset={{
           id: data.id,

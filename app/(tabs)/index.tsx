@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Card } from "@/src/components/Card";
 import { DonutChart } from "@/src/components/DonutChart";
@@ -9,13 +9,14 @@ import { FeedbackState } from "@/src/components/FeedbackState";
 import { Screen } from "@/src/components/Screen";
 import { TransactionRow } from "@/src/components/TransactionRow";
 import { getDashboardSummary, listTransactions } from "@/src/db/repository";
-import { monthBounds, monthStartFor } from "@/src/domain/dates";
+import { monthBounds } from "@/src/domain/dates";
 import { formatMoney } from "@/src/domain/money";
 import type { DashboardSummary, Transaction } from "@/src/domain/types";
 import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
 import { getSavingsTotal } from "@/src/features/savings/repository";
 import { useReloadable } from "@/src/hooks/useReloadable";
+import { getFirebaseAuth } from "@/src/services/firebase/config";
 import { useAppStore } from "@/src/state/appStore";
 
 interface HomeData {
@@ -27,7 +28,6 @@ const EMPTY: HomeData = {
   summary: {
     spendingMinor: 0,
     incomeMinor: 0,
-    budgetMinor: null,
     categoryTotals: [],
   },
   recent: [],
@@ -42,19 +42,16 @@ export default function HomeScreen() {
   const loader = useCallback(async () => {
     const reference = new Date();
     const bounds = monthBounds(reference, profile.timezone);
-    const monthStart = monthStartFor(reference, profile.timezone);
     const [summary, recent, savingsMinor] = await Promise.all([
-      getDashboardSummary(bounds.start, bounds.end, monthStart),
+      getDashboardSummary(bounds.start, bounds.end),
       listTransactions({ limit: 5 }),
-      getSavingsTotal(bounds.start, bounds.end),
+      getSavingsTotal(bounds.start, bounds.end, profile.defaultCurrency),
     ]);
     return { summary, recent, savingsMinor };
-  }, [profile.timezone]);
+  }, [profile.defaultCurrency, profile.timezone]);
   const { data, loading, error, reload } = useReloadable(loader, EMPTY);
-  const remaining =
-    data.summary.budgetMinor == null
-      ? null
-      : data.summary.budgetMinor - data.summary.spendingMinor;
+  const moneyLeft = data.summary.incomeMinor - data.summary.spendingMinor;
+  const cloudUser = getFirebaseAuth()?.currentUser;
   const greeting =
     new Date().getHours() < 12
       ? "Good morning"
@@ -84,7 +81,14 @@ export default function HomeScreen() {
           onPress={() => router.push("/settings")}
           style={[styles.avatar, { backgroundColor: colors.primarySoft }]}
         >
-          <Ionicons name="person-outline" size={20} color={colors.primary} />
+          {cloudUser?.photoURL ? (
+            <Image
+              source={{ uri: cloudUser.photoURL }}
+              style={styles.avatarImage}
+            />
+          ) : (
+            <Ionicons name="person-outline" size={20} color={colors.primary} />
+          )}
         </Pressable>
       }
     >
@@ -116,21 +120,14 @@ export default function HomeScreen() {
             ]}
           >
             <Text style={[styles.heroLabel, { color: colors.textMuted }]}>
-              Available after monthly spending
+              Money left
             </Text>
             <Text
               adjustsFontSizeToFit
               numberOfLines={1}
               style={[styles.heroAmount, { color: colors.text }]}
             >
-              {formatMoney(
-                Math.max(
-                  0,
-                  data.summary.incomeMinor - data.summary.spendingMinor,
-                ),
-                profile.defaultCurrency,
-                profile.locale,
-              )}
+              {formatMoney(moneyLeft, profile.defaultCurrency, profile.locale)}
             </Text>
             <View style={styles.metrics}>
               <Metric
@@ -150,23 +147,6 @@ export default function HomeScreen() {
                   profile.locale,
                 )}
                 color={colors.income}
-              />
-              <Metric
-                label="Budget left"
-                value={
-                  remaining == null
-                    ? "Not set"
-                    : formatMoney(
-                        remaining,
-                        profile.defaultCurrency,
-                        profile.locale,
-                      )
-                }
-                color={
-                  remaining != null && remaining < 0
-                    ? colors.expense
-                    : colors.primary
-                }
               />
             </View>
           </Card>
@@ -321,7 +301,12 @@ function Metric({
       <Text style={[styles.metricLabel, { color: colors.textMuted }]}>
         {label}
       </Text>
-      <Text numberOfLines={1} style={[styles.metricValue, { color }]}>
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.62}
+        numberOfLines={1}
+        style={[styles.metricValue, { color }]}
+      >
         {value}
       </Text>
     </View>
@@ -388,7 +373,9 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  avatarImage: { width: "100%", height: "100%" },
   hero: { padding: spacing.lg, borderWidth: 1 },
   heroLabel: { fontSize: 12, fontWeight: "700" },
   heroAmount: {
@@ -398,9 +385,19 @@ const styles = StyleSheet.create({
     marginVertical: spacing.xs,
   },
   metrics: { flexDirection: "row", gap: spacing.xs },
-  metric: { flex: 1, padding: spacing.sm, borderRadius: radius.md },
-  metricLabel: { fontSize: 9 },
-  metricValue: { fontSize: 11, fontWeight: "800", marginTop: 5 },
+  metric: {
+    flex: 1,
+    minWidth: 0,
+    padding: spacing.md,
+    borderRadius: radius.md,
+  },
+  metricLabel: { fontSize: 12, fontWeight: "600" },
+  metricValue: {
+    fontSize: 17,
+    lineHeight: 23,
+    fontWeight: "800",
+    marginTop: 5,
+  },
   quickGrid: { flexDirection: "row", gap: spacing.xs },
   quick: {
     flex: 1,

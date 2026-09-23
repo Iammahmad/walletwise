@@ -1,8 +1,8 @@
 import * as repository from "@/src/db/repository";
+import * as splitCloudMerge from "@/src/features/splits/cloudMerge";
 import * as firebaseConfig from "@/src/services/firebase/config";
 import { syncNow } from "@/src/services/sync";
 import { getDoc, getDocs, setDoc } from "firebase/firestore";
-import { httpsCallable } from "firebase/functions";
 
 jest.mock("@/src/db/repository", () => ({
   listOutbox: jest.fn(),
@@ -15,11 +15,10 @@ jest.mock("@/src/db/repository", () => ({
   setLastPulledAt: jest.fn(),
 }));
 jest.mock("@/src/features/splits/cloudMerge", () => ({
-  mergeRemoteSplit: jest.fn(),
+  mergePrivateSplit: jest.fn(),
 }));
 jest.mock("@/src/services/firebase/config", () => ({
   getFirebaseAuth: jest.fn(),
-  getFirebaseFunctions: jest.fn(),
   getFirestoreDb: jest.fn(),
 }));
 jest.mock("firebase/firestore", () => ({
@@ -45,7 +44,6 @@ jest.mock("firebase/firestore", () => ({
     value,
   })),
 }));
-jest.mock("firebase/functions", () => ({ httpsCallable: jest.fn() }));
 
 const outboxItem = {
   id: "outbox-1",
@@ -55,8 +53,6 @@ const outboxItem = {
   attemptCount: 0,
 };
 const emptySnapshot = { docs: [], size: 0 };
-const splitCallable = jest.fn();
-
 describe("Firebase offline outbox and sync", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -64,9 +60,6 @@ describe("Firebase offline outbox and sync", () => {
       .mocked(firebaseConfig.getFirebaseAuth)
       .mockReturnValue({ currentUser: { uid: "user-1" } } as never);
     jest.mocked(firebaseConfig.getFirestoreDb).mockReturnValue({} as never);
-    jest
-      .mocked(firebaseConfig.getFirebaseFunctions)
-      .mockReturnValue({} as never);
     jest.mocked(repository.listOutbox).mockResolvedValue([outboxItem]);
     jest.mocked(repository.getCloudPayload).mockResolvedValue({
       id: "tx-1",
@@ -80,11 +73,12 @@ describe("Firebase offline outbox and sync", () => {
     jest
       .mocked(getDoc)
       .mockResolvedValueOnce({ data: () => undefined } as never)
-      .mockResolvedValue({ exists: () => false } as never);
+      .mockResolvedValue({
+        data: () => undefined,
+        exists: () => false,
+      } as never);
     jest.mocked(getDocs).mockResolvedValue(emptySnapshot as never);
     jest.mocked(setDoc).mockResolvedValue(undefined);
-    splitCallable.mockResolvedValue({ data: { saved: true } });
-    jest.mocked(httpsCallable).mockReturnValue(splitCallable as never);
   });
 
   it("pushes a queued write by UUID and pulls every private collection", async () => {
@@ -113,6 +107,26 @@ describe("Firebase offline outbox and sync", () => {
     expect(repository.setLastPulledAt).toHaveBeenCalledTimes(9);
   });
 
+  it("restores private split documents through the validated split merger", async () => {
+    const splitRow = {
+      id: "5d896eef-c90d-49ce-a29f-6a1af5c0d22b",
+      user_id: "user-1",
+      updated_at: "2026-09-23T10:00:00.000Z",
+    };
+    jest.mocked(getDocs).mockImplementation(async (request: unknown) => {
+      const reference = (request as { reference?: string }).reference;
+      return (
+        reference?.endsWith("/users/user-1/splits")
+          ? { docs: [{ data: () => splitRow }], size: 1 }
+          : emptySnapshot
+      ) as never;
+    });
+
+    await syncNow();
+
+    expect(splitCloudMerge.mergePrivateSplit).toHaveBeenCalledWith(splitRow);
+  });
+
   it("keeps a failed write queued for retry", async () => {
     jest.mocked(setDoc).mockRejectedValueOnce(new Error("offline"));
     await syncNow();
@@ -130,13 +144,16 @@ describe("Firebase offline outbox and sync", () => {
       .mockResolvedValueOnce({
         data: () => ({ updated_at: "2026-08-30T11:00:00.000Z" }),
       } as never)
-      .mockResolvedValue({ exists: () => false } as never);
+      .mockResolvedValue({
+        data: () => undefined,
+        exists: () => false,
+      } as never);
     await syncNow();
     expect(setDoc).not.toHaveBeenCalled();
     expect(repository.markOutboxSuccess).toHaveBeenCalledWith(outboxItem);
   });
 
-  it("uses the protected callable for a shared split", async () => {
+  it("stores a split in the signed-in user's private Firestore tree", async () => {
     jest
       .mocked(repository.listOutbox)
       .mockResolvedValueOnce([
@@ -144,21 +161,26 @@ describe("Firebase offline outbox and sync", () => {
       ]);
     jest.mocked(repository.getCloudPayload).mockResolvedValueOnce({
       id: "split-1",
-      participant_uids: ["user-1", "user-2"],
+      user_id: "user-1",
+      updated_at: "2026-08-30T10:00:00.000Z",
+      participants: [],
     });
     jest
       .mocked(getDoc)
       .mockReset()
-      .mockResolvedValue({ exists: () => false } as never);
+      .mockResolvedValue({
+        data: () => undefined,
+        exists: () => false,
+      } as never);
     await syncNow();
-    expect(splitCallable).toHaveBeenCalledWith(
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/user-1/splits/split-1",
       expect.objectContaining({ id: "split-1" }),
+      { merge: true },
     );
-    expect(setDoc).not.toHaveBeenCalled();
   });
 
-  it("keeps private backup working when cloud functions are disabled", async () => {
-    jest.mocked(firebaseConfig.getFirebaseFunctions).mockReturnValue(null);
+  it("backs up transactions and splits without Cloud Functions", async () => {
     const splitItem = {
       ...outboxItem,
       id: "outbox-2",
@@ -178,7 +200,9 @@ describe("Firebase offline outbox and sync", () => {
       })
       .mockResolvedValueOnce({
         id: "split-1",
-        participant_uids: ["user-1", "user-2"],
+        user_id: "user-1",
+        updated_at: "2026-08-30T10:00:00.000Z",
+        participants: [],
       });
 
     await syncNow();
@@ -189,7 +213,11 @@ describe("Firebase offline outbox and sync", () => {
       { merge: true },
     );
     expect(repository.markOutboxSuccess).toHaveBeenCalledWith(outboxItem);
-    expect(repository.markOutboxSuccess).not.toHaveBeenCalledWith(splitItem);
-    expect(splitCallable).not.toHaveBeenCalled();
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/user-1/splits/split-1",
+      expect.objectContaining({ id: "split-1" }),
+      { merge: true },
+    );
+    expect(repository.markOutboxSuccess).toHaveBeenCalledWith(splitItem);
   });
 });

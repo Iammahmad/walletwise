@@ -16,10 +16,6 @@ import type {
 } from "@/src/domain/types";
 import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
-import {
-  createConnectionInvite,
-  shareInviteOnWhatsApp,
-} from "@/src/features/splits/invites";
 import { allocateEqualShares } from "@/src/features/splits/calculations";
 import {
   listContacts,
@@ -27,10 +23,7 @@ import {
   saveSplit,
 } from "@/src/features/splits/repository";
 import { normalizeError } from "@/src/services/errors";
-import {
-  getFirebaseAuth,
-  isFirebaseFunctionsEnabled,
-} from "@/src/services/firebase/config";
+import { getFirebaseAuth } from "@/src/services/firebase/config";
 import { syncNow } from "@/src/services/sync";
 import { useAppStore } from "@/src/state/appStore";
 
@@ -68,25 +61,13 @@ export default function NewSplitScreen() {
     }
   }, [amount, profile.defaultCurrency]);
 
-  const addLocalFriend = async () => {
+  const addFriend = async () => {
     try {
       const contact = await saveContact({ displayName: newFriend });
       setContacts((value) => [...value, contact]);
       setSelected((value) => [...value, contact.id]);
       setNewFriend("");
       bump();
-    } catch (caught) {
-      setError(normalizeError(caught).message);
-    }
-  };
-  const invite = async () => {
-    if (!getFirebaseAuth()?.currentUser) {
-      router.push("/auth");
-      return;
-    }
-    try {
-      const result = await createConnectionInvite();
-      await shareInviteOnWhatsApp(result.url);
     } catch (caught) {
       setError(normalizeError(caught).message);
     }
@@ -162,7 +143,7 @@ export default function NewSplitScreen() {
           })),
         ];
       }
-      const saved = await saveSplit({
+      await saveSplit({
         description,
         splitType: type,
         loanDirection: type === "loan" ? direction : null,
@@ -174,7 +155,7 @@ export default function NewSplitScreen() {
       });
       bump();
       if (authUser) void syncNow().catch(() => undefined);
-      router.replace({ pathname: "/split/[id]", params: { id: saved.id } });
+      router.replace("/(tabs)/splits");
     } catch (caught) {
       setError(normalizeError(caught).message);
     } finally {
@@ -183,10 +164,7 @@ export default function NewSplitScreen() {
   };
 
   return (
-    <Screen
-      title="New split"
-      subtitle="This stays separate from your money tracker."
-    >
+    <Screen title="New split">
       <View style={[styles.toggle, { backgroundColor: colors.surface }]}>
         <Pressable
           onPress={() => setType("equal")}
@@ -265,13 +243,6 @@ export default function NewSplitScreen() {
         <Text style={[styles.heading, { color: colors.text }]}>
           {type === "loan" ? "Choose one friend" : "Choose friends"}
         </Text>
-        <Button
-          label={isFirebaseFunctionsEnabled ? "Invite" : "Local only"}
-          icon="logo-whatsapp"
-          variant="ghost"
-          disabled={!isFirebaseFunctionsEnabled}
-          onPress={() => void invite()}
-        />
       </View>
       <Card>
         {contacts.map((contact) => {
@@ -300,9 +271,7 @@ export default function NewSplitScreen() {
                   {contact.displayName}
                 </Text>
                 <Text style={[styles.meta, { color: colors.textMuted }]}>
-                  {contact.status === "connected"
-                    ? "Connected · notifications enabled"
-                    : "Local contact"}
+                  {contact.email ?? "Friend"}
                 </Text>
               </View>
             </Pressable>
@@ -310,14 +279,14 @@ export default function NewSplitScreen() {
         })}
         {!contacts.length ? (
           <Text style={[styles.empty, { color: colors.textMuted }]}>
-            No friends yet. Add one locally or send an invitation.
+            No friends yet. Add one below to start a split.
           </Text>
         ) : null}
       </Card>
       <View style={styles.localFriend}>
         <View style={{ flex: 1 }}>
           <FormField
-            label="Add a local friend"
+            label="Add a friend"
             value={newFriend}
             onChangeText={setNewFriend}
             placeholder="Friend’s name"
@@ -326,7 +295,7 @@ export default function NewSplitScreen() {
         <Button
           label="Add"
           disabled={!newFriend.trim()}
-          onPress={() => void addLocalFriend()}
+          onPress={() => void addFriend()}
         />
       </View>
       {type === "equal" && chosen.length ? (

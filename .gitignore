@@ -12,11 +12,18 @@ expo-env.d.ts
 # Native
 .kotlin/
 *.orig.*
+*.keystore
 *.jks
 *.p8
 *.p12
+*.pfx
+*.pkcs12
+*.ppk
 *.key
 *.mobileprovision
+*.provisionprofile
+id_dsa
+id_ecdsa
 
 # Metro
 .metro-health-check*
@@ -33,8 +40,42 @@ yarn-error.*
 # local env files
 .env
 .env.*
+*.env
+*.env.*
 !.env.example
+!.env.*.example
 .env*.local
+
+# Local credentials and provider configuration
+google-services.json
+GoogleService-Info.plist
+.firebaserc
+.runtimeconfig.json
+.secret.local
+credentials.json
+application_default_credentials.json
+serviceAccountKey.json
+*service-account*.json
+*serviceAccount*.json
+firebase-adminsdk*.json
+.npmrc
+.netrc
+sentry.properties
+id_rsa
+id_ed25519
+credentials/
+secrets/
+.eas/
+
+# Local financial/export data and emulator snapshots
+*.db
+*.sqlite
+*.sqlite3
+*.log
+walletwise*.csv
+transactions*.csv
+firebase-export-*/
+firestore-export-*/
 
 # typescript
 *.tsbuildinfo
@@ -49,6 +90,7 @@ coverage/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+*-debug.log.*
 functions/lib/
 /releases/*.apk
 /releases/*.aab

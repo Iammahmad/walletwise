@@ -42,6 +42,7 @@ const PRIVATE_CLOUD_COLLECTIONS = [
   "budgets",
   "savings",
   "splitContacts",
+  "splits",
   "splitSettlements",
   "pushTokens",
 ] as const;

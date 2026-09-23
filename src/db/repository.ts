@@ -820,7 +820,6 @@ export async function findRecentTransaction(
 export async function getDashboardSummary(
   start: string,
   end: string,
-  monthStart: string,
 ): Promise<DashboardSummary> {
   const db = await getDatabase();
   const profile = await activeProfile(db);
@@ -851,16 +850,9 @@ export async function getDashboardSummary(
     start,
     end,
   );
-  const budget = await db.getFirstAsync<{ amount_minor: number }>(
-    `SELECT amount_minor FROM budgets WHERE local_owner_id = ? AND budget_category_id IS NULL AND currency = ? AND deleted_at IS NULL AND start_date = ? ORDER BY updated_at DESC LIMIT 1`,
-    profile.id,
-    profile.defaultCurrency,
-    monthStart,
-  );
   return {
     spendingMinor: totals?.spending_minor ?? 0,
     incomeMinor: totals?.income_minor ?? 0,
-    budgetMinor: budget?.amount_minor ?? null,
     categoryTotals: categories.map((row) => ({
       categoryId: row.category_id,
       name: row.name,
@@ -876,8 +868,8 @@ export async function listBudgets(): Promise<Budget[]> {
   const rows = await db.getAllAsync<Row>(
     `SELECT b.*, bc.name AS budget_category_name, bc.icon AS budget_category_icon, bc.color AS budget_category_color
      FROM budgets b LEFT JOIN budget_categories bc ON bc.id = b.budget_category_id
-     WHERE b.local_owner_id = ? AND b.deleted_at IS NULL
-     ORDER BY b.budget_category_id IS NOT NULL, bc.name COLLATE NOCASE`,
+     WHERE b.local_owner_id = ? AND b.deleted_at IS NULL AND b.budget_category_id IS NOT NULL
+     ORDER BY bc.name COLLATE NOCASE`,
     profile.id,
   );
   return rows.map(mapBudget);
@@ -919,8 +911,6 @@ export async function getBudgetProgress(
       : null;
     const spentMinor = spendingRows.reduce((total, transaction) => {
       if (transaction.currency !== budget.currency) return total;
-      if (!budget.budgetCategoryId)
-        return total + Number(transaction.amount_minor);
       if (
         transaction.budget_assignment_mode === "explicit" &&
         transaction.budget_category_id === budget.budgetCategoryId
@@ -950,21 +940,26 @@ export async function getBudgetProgress(
 
 export async function saveBudget(input: {
   id?: string;
-  budgetCategoryId: string | null;
+  budgetCategoryId: string;
   amountMinor: number;
   currency: string;
   startDate: string;
 }): Promise<Budget> {
   const db = await getDatabase();
   const profile = await activeProfile(db);
+  const category = await db.getFirstAsync<{ id: string }>(
+    "SELECT id FROM budget_categories WHERE id = ? AND local_owner_id = ? AND deleted_at IS NULL",
+    input.budgetCategoryId,
+    profile.id,
+  );
+  if (!category) throw new Error("Choose a valid budget category.");
   if (!input.id) {
     const duplicate = await db.getFirstAsync<{ id: string }>(
       `SELECT id FROM budgets WHERE local_owner_id = ? AND currency = ? AND start_date = ? AND deleted_at IS NULL
-       AND ((budget_category_id IS NULL AND ? IS NULL) OR budget_category_id = ?) LIMIT 1`,
+       AND budget_category_id = ? LIMIT 1`,
       profile.id,
       input.currency,
       input.startDate,
-      input.budgetCategoryId,
       input.budgetCategoryId,
     );
     if (duplicate)
@@ -1087,11 +1082,16 @@ export async function preparePristineLocalDataForCloudRestore(
     "SELECT COUNT(*) AS count FROM splits WHERE local_owner_id = ?",
     profile.id,
   );
+  const splitContactCount = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM split_contacts WHERE local_owner_id = ?",
+    profile.id,
+  );
   if (
     (transactionCount?.count ?? 0) > 0 ||
     (budgetCount?.count ?? 0) > 0 ||
     (savingCount?.count ?? 0) > 0 ||
-    (splitCount?.count ?? 0) > 0
+    (splitCount?.count ?? 0) > 0 ||
+    (splitContactCount?.count ?? 0) > 0
   )
     return false;
 
@@ -1316,6 +1316,9 @@ function isValidRemoteRow(
     const budgetCategoryId = nullableString(row, "budget_category_id");
     if (!mode || !["auto", "explicit", "none"].includes(mode)) return false;
     if ((mode === "explicit") !== Boolean(budgetCategoryId)) return false;
+  }
+  if (entityType === "budgets" && !nullableString(row, "budget_category_id")) {
+    return false;
   }
   if (entityType === "accounts") {
     const balance = Number(row.opening_balance_minor);
