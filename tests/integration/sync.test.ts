@@ -1,6 +1,8 @@
 import * as repository from "@/src/db/repository";
-import { getSupabase } from "@/src/services/supabase";
+import * as firebaseConfig from "@/src/services/firebase/config";
 import { syncNow } from "@/src/services/sync";
+import { getDoc, getDocs, setDoc } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 
 jest.mock("@/src/db/repository", () => ({
   listOutbox: jest.fn(),
@@ -12,143 +14,182 @@ jest.mock("@/src/db/repository", () => ({
   getLastPulledAt: jest.fn(),
   setLastPulledAt: jest.fn(),
 }));
+jest.mock("@/src/features/splits/cloudMerge", () => ({
+  mergeRemoteSplit: jest.fn(),
+}));
+jest.mock("@/src/services/firebase/config", () => ({
+  getFirebaseAuth: jest.fn(),
+  getFirebaseFunctions: jest.fn(),
+  getFirestoreDb: jest.fn(),
+}));
+jest.mock("firebase/firestore", () => ({
+  collection: jest.fn((...parts: string[]) => parts.join("/")),
+  doc: jest.fn((...parts: unknown[]) => parts.slice(1).join("/")),
+  documentId: jest.fn(() => "__name__"),
+  getDoc: jest.fn(),
+  getDocs: jest.fn(),
+  limit: jest.fn((value: number) => ({ limit: value })),
+  orderBy: jest.fn((field: string, direction?: string) => ({
+    orderBy: field,
+    direction,
+  })),
+  query: jest.fn((reference: unknown, ...constraints: unknown[]) => ({
+    reference,
+    constraints,
+  })),
+  setDoc: jest.fn(),
+  startAfter: jest.fn((cursor: unknown) => ({ cursor })),
+  where: jest.fn((field: string, operation: string, value: unknown) => ({
+    field,
+    operation,
+    value,
+  })),
+}));
+jest.mock("firebase/functions", () => ({ httpsCallable: jest.fn() }));
 
-jest.mock("@/src/services/supabase", () => ({ getSupabase: jest.fn() }));
-
-const mockListOutbox = jest.mocked(repository.listOutbox);
-const mockGetCloudPayload = jest.mocked(repository.getCloudPayload);
-const mockMarkSuccess = jest.mocked(repository.markOutboxSuccess);
-const mockMarkFailure = jest.mocked(repository.markOutboxFailure);
-const mockMergeProfile = jest.mocked(repository.mergeRemoteProfile);
-const mockMerge = jest.mocked(repository.mergeRemoteRows);
-const mockGetLastPulled = jest.mocked(repository.getLastPulledAt);
-const mockSetLastPulled = jest.mocked(repository.setLastPulledAt);
-const mockGetSupabase = jest.mocked(getSupabase);
-const mockUpsert = jest.fn();
-
-const chain = {
-  select: jest.fn(),
-  eq: jest.fn(),
-  gt: jest.fn(),
-  lte: jest.fn(),
-  order: jest.fn(),
-  range: jest.fn(),
-  maybeSingle: jest.fn(),
-  upsert: mockUpsert,
+const outboxItem = {
+  id: "outbox-1",
+  userId: "user-1",
+  entityType: "transactions" as const,
+  entityId: "tx-1",
+  attemptCount: 0,
 };
-chain.select.mockReturnValue(chain);
-chain.eq.mockReturnValue(chain);
-chain.gt.mockReturnValue(chain);
-chain.lte.mockReturnValue(chain);
-chain.order.mockReturnValue(chain);
-chain.range.mockResolvedValue({ data: [], error: null });
-chain.maybeSingle.mockResolvedValue({ data: null, error: null });
-const mockSupabase = {
-  auth: { getSession: jest.fn() },
-  from: jest.fn(() => chain),
-};
+const emptySnapshot = { docs: [], size: 0 };
+const splitCallable = jest.fn();
 
-describe("offline outbox and sync integration", () => {
+describe("Firebase offline outbox and sync", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    chain.select.mockReturnValue(chain);
-    chain.eq.mockReturnValue(chain);
-    chain.gt.mockReturnValue(chain);
-    chain.lte.mockReturnValue(chain);
-    chain.order.mockReturnValue(chain);
-    chain.range.mockResolvedValue({ data: [], error: null });
-    chain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    mockSupabase.from.mockReturnValue(chain);
-    mockGetSupabase.mockReturnValue(mockSupabase as never);
-    mockSupabase.auth.getSession.mockResolvedValue({
-      data: { session: { user: { id: "user-1" } } },
-      error: null,
-    });
-    mockListOutbox.mockResolvedValue([
-      {
-        id: "outbox-1",
-        userId: "user-1",
-        entityType: "transactions",
-        entityId: "tx-1",
-        attemptCount: 0,
-      },
-    ]);
-    mockGetCloudPayload.mockResolvedValue({
-      id: "tx-1",
-      user_id: "user-1",
-      amount_minor: 600,
-    });
-    mockUpsert.mockResolvedValue({ error: null });
-    mockGetLastPulled.mockResolvedValue("1970-01-01T00:00:00.000Z");
-  });
-
-  it("pushes a queued local write idempotently and then pulls every entity table", async () => {
-    await syncNow();
-    expect(mockUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "tx-1" }),
-      { onConflict: "id" },
-    );
-    expect(mockMarkSuccess).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: "tx-1" }),
-    );
-    expect(mockMerge).toHaveBeenCalledTimes(5);
-    expect(mockMerge.mock.calls.map(([table]) => table)).toEqual([
-      "accounts",
-      "categories",
-      "budget_categories",
-      "transactions",
-      "budgets",
-    ]);
-    expect(mockMergeProfile).not.toHaveBeenCalled();
-    expect(mockSetLastPulled).toHaveBeenCalledTimes(5);
-  });
-
-  it("keeps a failed queued write for retry instead of marking it synced", async () => {
-    mockUpsert.mockResolvedValueOnce({ error: new Error("offline") });
-    await syncNow();
-    expect(mockMarkFailure).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: "tx-1" }),
-      expect.any(String),
-    );
-    expect(mockMarkSuccess).not.toHaveBeenCalled();
-  });
-
-  it("does not overwrite a newer cloud row with a stale queued write", async () => {
-    mockGetCloudPayload.mockResolvedValueOnce({
+    jest
+      .mocked(firebaseConfig.getFirebaseAuth)
+      .mockReturnValue({ currentUser: { uid: "user-1" } } as never);
+    jest.mocked(firebaseConfig.getFirestoreDb).mockReturnValue({} as never);
+    jest
+      .mocked(firebaseConfig.getFirebaseFunctions)
+      .mockReturnValue({} as never);
+    jest.mocked(repository.listOutbox).mockResolvedValue([outboxItem]);
+    jest.mocked(repository.getCloudPayload).mockResolvedValue({
       id: "tx-1",
       user_id: "user-1",
       amount_minor: 600,
       updated_at: "2026-08-30T10:00:00.000Z",
     });
-    chain.maybeSingle.mockResolvedValueOnce({
-      data: { updated_at: "2026-08-30T11:00:00.000Z" },
-      error: null,
-    });
-    await syncNow();
-    expect(mockUpsert).not.toHaveBeenCalled();
-    expect(mockMarkSuccess).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: "tx-1" }),
-    );
+    jest
+      .mocked(repository.getLastPulledAt)
+      .mockResolvedValue("1970-01-01T00:00:00.000Z");
+    jest
+      .mocked(getDoc)
+      .mockResolvedValueOnce({ data: () => undefined } as never)
+      .mockResolvedValue({ exists: () => false } as never);
+    jest.mocked(getDocs).mockResolvedValue(emptySnapshot as never);
+    jest.mocked(setDoc).mockResolvedValue(undefined);
+    splitCallable.mockResolvedValue({ data: { saved: true } });
+    jest.mocked(httpsCallable).mockReturnValue(splitCallable as never);
   });
 
-  it("pulls an existing cloud profile before paginated finance rows", async () => {
-    chain.maybeSingle
-      .mockResolvedValueOnce({ data: null, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          user_id: "user-1",
-          default_currency: "PKR",
-          locale: "en-PK",
-          timezone: "Asia/Karachi",
-          created_at: "2026-08-01T00:00:00.000Z",
-          updated_at: "2026-08-30T00:00:00.000Z",
-        },
-        error: null,
-      });
+  it("pushes a queued write by UUID and pulls every private collection", async () => {
     await syncNow();
-    expect(mockMergeProfile).toHaveBeenCalledWith(
-      expect.objectContaining({ default_currency: "PKR" }),
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/user-1/transactions/tx-1",
+      expect.objectContaining({ id: "tx-1" }),
+      { merge: true },
     );
-    expect(chain.range).toHaveBeenCalledTimes(5);
+    expect(repository.markOutboxSuccess).toHaveBeenCalledWith(outboxItem);
+    expect(repository.mergeRemoteRows).toHaveBeenCalledTimes(8);
+    expect(
+      jest
+        .mocked(repository.mergeRemoteRows)
+        .mock.calls.map(([table]) => table),
+    ).toEqual([
+      "accounts",
+      "categories",
+      "budget_categories",
+      "transactions",
+      "budgets",
+      "savings",
+      "split_contacts",
+      "split_settlements",
+    ]);
+    expect(repository.setLastPulledAt).toHaveBeenCalledTimes(9);
+  });
+
+  it("keeps a failed write queued for retry", async () => {
+    jest.mocked(setDoc).mockRejectedValueOnce(new Error("offline"));
+    await syncNow();
+    expect(repository.markOutboxFailure).toHaveBeenCalledWith(
+      outboxItem,
+      expect.any(String),
+    );
+    expect(repository.markOutboxSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a newer cloud row", async () => {
+    jest
+      .mocked(getDoc)
+      .mockReset()
+      .mockResolvedValueOnce({
+        data: () => ({ updated_at: "2026-08-30T11:00:00.000Z" }),
+      } as never)
+      .mockResolvedValue({ exists: () => false } as never);
+    await syncNow();
+    expect(setDoc).not.toHaveBeenCalled();
+    expect(repository.markOutboxSuccess).toHaveBeenCalledWith(outboxItem);
+  });
+
+  it("uses the protected callable for a shared split", async () => {
+    jest
+      .mocked(repository.listOutbox)
+      .mockResolvedValueOnce([
+        { ...outboxItem, entityType: "splits", entityId: "split-1" },
+      ]);
+    jest.mocked(repository.getCloudPayload).mockResolvedValueOnce({
+      id: "split-1",
+      participant_uids: ["user-1", "user-2"],
+    });
+    jest
+      .mocked(getDoc)
+      .mockReset()
+      .mockResolvedValue({ exists: () => false } as never);
+    await syncNow();
+    expect(splitCallable).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "split-1" }),
+    );
+    expect(setDoc).not.toHaveBeenCalled();
+  });
+
+  it("keeps private backup working when cloud functions are disabled", async () => {
+    jest.mocked(firebaseConfig.getFirebaseFunctions).mockReturnValue(null);
+    const splitItem = {
+      ...outboxItem,
+      id: "outbox-2",
+      entityType: "splits" as const,
+      entityId: "split-1",
+    };
+    jest
+      .mocked(repository.listOutbox)
+      .mockResolvedValueOnce([outboxItem, splitItem]);
+    jest
+      .mocked(repository.getCloudPayload)
+      .mockResolvedValueOnce({
+        id: "tx-1",
+        user_id: "user-1",
+        amount_minor: 600,
+        updated_at: "2026-08-30T10:00:00.000Z",
+      })
+      .mockResolvedValueOnce({
+        id: "split-1",
+        participant_uids: ["user-1", "user-2"],
+      });
+
+    await syncNow();
+
+    expect(setDoc).toHaveBeenCalledWith(
+      "users/user-1/transactions/tx-1",
+      expect.objectContaining({ id: "tx-1" }),
+      { merge: true },
+    );
+    expect(repository.markOutboxSuccess).toHaveBeenCalledWith(outboxItem);
+    expect(repository.markOutboxSuccess).not.toHaveBeenCalledWith(splitItem);
+    expect(splitCallable).not.toHaveBeenCalled();
   });
 });

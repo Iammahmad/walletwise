@@ -1,19 +1,28 @@
 import * as Network from "expo-network";
+import { useRouter } from "expo-router";
+import { onAuthStateChanged } from "firebase/auth";
 import { type PropsWithChildren, useEffect, useRef } from "react";
-import { AppState, type AppStateStatus } from "react-native";
 
 import { getDatabase } from "@/src/db/database";
 import { getProfile } from "@/src/db/repository";
-import { getSupabase, isCloudConfigured } from "@/src/services/supabase";
 import { logSafeError } from "@/src/services/errors";
+import {
+  getFirebaseAuth,
+  isFirebaseConfigured,
+} from "@/src/services/firebase/config";
 import {
   isConnectivityTransition,
   isNetworkOnline,
 } from "@/src/services/networkState";
+import {
+  registerPushNotifications,
+  subscribeToNotificationResponses,
+} from "@/src/services/notifications";
 import { syncNow } from "@/src/services/sync";
 import { useAppStore } from "@/src/state/appStore";
 
 export function AppProvider({ children }: PropsWithChildren) {
+  const router = useRouter();
   const setProfile = useAppStore((state) => state.setProfile);
   const setInitialized = useAppStore((state) => state.setInitialized);
   const setOnline = useAppStore((state) => state.setOnline);
@@ -21,21 +30,25 @@ export function AppProvider({ children }: PropsWithChildren) {
   const bump = useAppStore((state) => state.bumpDbRevision);
   const lastOnline = useRef<boolean | null>(null);
 
-  useEffect(() => {
-    const supabase = getSupabase();
-    if (!supabase) return;
-
-    const updateAutoRefresh = (state: AppStateStatus) => {
-      if (state === "active") supabase.auth.startAutoRefresh();
-      else supabase.auth.stopAutoRefresh();
-    };
-    updateAutoRefresh(AppState.currentState);
-    const subscription = AppState.addEventListener("change", updateAutoRefresh);
-    return () => {
-      subscription.remove();
-      supabase.auth.stopAutoRefresh();
-    };
-  }, []);
+  useEffect(
+    () =>
+      subscribeToNotificationResponses((data) => {
+        void syncNow()
+          .catch((error) => logSafeError("notification-sync", error))
+          .finally(() => {
+            bump();
+            if (typeof data.splitId === "string") {
+              router.push({
+                pathname: "/split/[id]",
+                params: { id: data.splitId },
+              });
+            } else {
+              router.push("/(tabs)/splits");
+            }
+          });
+      }),
+    [bump, router],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -46,8 +59,8 @@ export function AppProvider({ children }: PropsWithChildren) {
         if (!mounted) return;
         setProfile(profile);
         setSyncState(
-          isCloudConfigured ? "idle" : "disabled",
-          isCloudConfigured ? null : "Cloud backup is not configured.",
+          isFirebaseConfigured ? "idle" : "disabled",
+          isFirebaseConfigured ? null : "Firebase backup is not configured.",
         );
         setInitialized(true);
       } catch (error) {
@@ -55,7 +68,7 @@ export function AppProvider({ children }: PropsWithChildren) {
         if (mounted)
           setInitialized(
             false,
-            "SpendSpeak could not open its local database. Restart the app and try again.",
+            "WalletWise could not open its local database. Restart the app and try again.",
           );
       }
     };
@@ -67,10 +80,10 @@ export function AppProvider({ children }: PropsWithChildren) {
       lastOnline.current = online;
       setOnline(online);
       if (!online) {
-        if (isCloudConfigured) setSyncState("offline");
+        if (isFirebaseConfigured) setSyncState("offline");
         return;
       }
-      if (isCloudConfigured) {
+      if (isFirebaseConfigured && getFirebaseAuth()?.currentUser) {
         setSyncState("syncing");
         void syncNow()
           .then(async () => {
@@ -93,6 +106,27 @@ export function AppProvider({ children }: PropsWithChildren) {
       subscription.remove();
     };
   }, [bump, setInitialized, setOnline, setProfile, setSyncState]);
+
+  useEffect(() => {
+    const auth = getFirebaseAuth();
+    if (!auth) return;
+    return onAuthStateChanged(auth, (user) => {
+      if (!user) return;
+      void registerPushNotifications().catch((error) =>
+        logSafeError("push-registration", error),
+      );
+      void syncNow()
+        .then(async () => {
+          setProfile(await getProfile());
+          setSyncState("idle");
+          bump();
+        })
+        .catch((error) => {
+          logSafeError("auth-sync", error);
+          setSyncState("error", "Firebase sync will retry automatically.");
+        });
+    });
+  }, [bump, setProfile, setSyncState]);
 
   return children;
 }

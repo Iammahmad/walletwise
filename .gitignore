@@ -44,7 +44,11 @@ coverage/
 /ios
 /android
 
-# Supabase CLI local cache
-/supabase/.temp/
+# Firebase CLI local state
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+functions/lib/
 /releases/*.apk
 /releases/*.aab

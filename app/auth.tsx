@@ -12,11 +12,15 @@ import { getProfile, resetLocalData } from "@/src/db/repository";
 import {
   deleteCloudAccount,
   signIn,
-  signInWithGoogle,
+  signInWithGoogleIdToken,
   signUp,
 } from "@/src/services/auth";
 import { normalizeError } from "@/src/services/errors";
-import { isCloudConfigured } from "@/src/services/supabase";
+import { isFirebaseConfigured } from "@/src/services/firebase/config";
+import {
+  isGoogleSignInConfigured,
+  requestGoogleIdToken,
+} from "@/src/services/googleSignIn";
 import { syncNow } from "@/src/services/sync";
 import { useAppStore } from "@/src/state/appStore";
 
@@ -24,7 +28,7 @@ type LoadingAction = "email" | "google" | "delete" | null;
 
 export default function AuthScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ delete?: string }>();
+  const params = useLocalSearchParams<{ delete?: string; returnTo?: string }>();
   const { colors } = useTheme();
   const setProfile = useAppStore((state) => state.setProfile);
   const bump = useAppStore((state) => state.bumpDbRevision);
@@ -38,7 +42,7 @@ export default function AuthScreen() {
     await syncNow();
     setProfile(await getProfile());
     bump();
-    router.replace("/(tabs)/settings");
+    router.replace((params.returnTo || "/settings") as never);
   };
 
   const submitEmail = async (mode: "in" | "up") => {
@@ -66,11 +70,12 @@ export default function AuthScreen() {
     setLoadingAction("google");
     setMessage(null);
     try {
-      const session = await signInWithGoogle();
-      if (!session) {
+      const idToken = await requestGoogleIdToken();
+      if (!idToken) {
         setMessage("Google sign-in was cancelled.");
         return;
       }
+      await signInWithGoogleIdToken(idToken);
       await finishAuthentication();
     } catch (error) {
       setMessage(normalizeError(error).message);
@@ -104,12 +109,12 @@ export default function AuthScreen() {
       ],
     );
 
-  if (!isCloudConfigured) {
+  if (!isFirebaseConfigured) {
     return (
       <Screen title="Local-only mode">
         <Card>
           <Text style={[styles.copy, { color: colors.text }]}>
-            Supabase is not configured. Add the public URL and publishable key
+            Firebase is not configured. Add the public Firebase web-app values
             described in README, then rebuild the app. Every local feature
             remains available.
           </Text>
@@ -155,11 +160,11 @@ export default function AuthScreen() {
     >
       <Card>
         <Text style={[styles.copy, { color: colors.textMuted }]}>
-          Signing in links this device’s local records to your private Supabase
-          account. Row Level Security keeps each user’s cloud rows isolated.
+          Signing in links this device’s local records to your private Firebase
+          account. Firestore Security Rules keep each user’s records isolated.
         </Text>
         <Text style={[styles.copy, { color: colors.textMuted }]}>
-          Google is used only to verify your identity. SpendSpeak does not
+          Google is used only to verify your identity. WalletWise does not
           request access to Google Drive, contacts, or financial data.
         </Text>
       </Card>
@@ -168,7 +173,7 @@ export default function AuthScreen() {
         icon="logo-google"
         variant="secondary"
         loading={loadingAction === "google"}
-        disabled={loading}
+        disabled={loading || !isGoogleSignInConfigured}
         accessibilityHint="Opens Google's secure account selection page"
         onPress={() => void submitGoogle()}
       />

@@ -1,0 +1,60 @@
+{
+  "runId": "walletwise-design-20260922",
+  "fileKey": "rKhGCC0pVrmfrl6edYNyQp",
+  "fileUrl": "https://www.figma.com/design/rKhGCC0pVrmfrl6edYNyQp",
+  "planKey": "team::1138371318806420861",
+  "planName": "THE CMS APP",
+  "phase": "phase0",
+  "step": "P1.f:blocker-mcp-rate-limit",
+  "entities": {
+    "collections": {
+      "colorPrimitives": "VariableCollectionId:2:2",
+      "colorEmerald": "VariableCollectionId:2:3",
+      "colorPurple": "VariableCollectionId:2:4",
+      "dimensions": "VariableCollectionId:2:5"
+    },
+    "variables": {
+      "primitiveIds": ["VariableID:3:2", "VariableID:3:3", "VariableID:3:4", "VariableID:3:5", "VariableID:3:6", "VariableID:3:7", "VariableID:3:8", "VariableID:3:9", "VariableID:3:10", "VariableID:3:11", "VariableID:3:12", "VariableID:3:13", "VariableID:3:14", "VariableID:3:15", "VariableID:3:16", "VariableID:3:17", "VariableID:3:18", "VariableID:3:19", "VariableID:3:20", "VariableID:3:21", "VariableID:3:22", "VariableID:3:23", "VariableID:3:24", "VariableID:3:25"],
+      "emeraldSemanticIds": ["VariableID:4:2", "VariableID:4:3", "VariableID:4:4", "VariableID:4:5", "VariableID:4:6", "VariableID:4:7", "VariableID:4:8", "VariableID:4:9", "VariableID:4:10", "VariableID:4:11", "VariableID:4:12", "VariableID:4:13", "VariableID:4:14", "VariableID:4:15", "VariableID:4:16", "VariableID:4:17"],
+      "purpleSemanticIds": ["VariableID:4:18", "VariableID:4:19", "VariableID:4:20", "VariableID:4:21", "VariableID:4:22", "VariableID:4:23", "VariableID:4:24", "VariableID:4:25", "VariableID:4:26", "VariableID:4:27", "VariableID:4:28", "VariableID:4:29", "VariableID:4:30", "VariableID:4:31", "VariableID:4:32", "VariableID:4:33"],
+      "dimensionIds": ["VariableID:4:34", "VariableID:4:35", "VariableID:4:36", "VariableID:4:37", "VariableID:4:38", "VariableID:4:39", "VariableID:4:40", "VariableID:4:41", "VariableID:4:42", "VariableID:4:43", "VariableID:4:44", "VariableID:4:45", "VariableID:4:46", "VariableID:4:47", "VariableID:4:48", "VariableID:4:49", "VariableID:4:50"]
+    },
+    "styles": {
+      "text": ["Display/Brand", "Heading/H1", "Heading/H2", "Heading/H3", "Body/Large", "Body/Medium", "Body/Small", "Label/Large", "Label/Medium", "Caption"],
+      "effect": []
+    },
+    "pages": {},
+    "components": {},
+    "screens": {}
+  },
+  "pendingValidations": [
+    "P1.f:create-effect-styles",
+    "P1.g:validate-foundations",
+    "P2:visual-pages"
+  ],
+  "assets": {
+    "iconEmerald": "assets/walletwise-icon-emerald-v1.png",
+    "iconPurple": "assets/walletwise-icon-purple-v1.png"
+  },
+  "blockers": [
+    {
+      "step": "P0.b",
+      "message": "Figma MCP Starter-plan tool-call limit reached on Budgetwise2",
+      "observedAt": "2026-09-22T09:34:00+05:00"
+    },
+    {
+      "step": "P1.f",
+      "message": "Figma MCP Starter-plan tool-call limit reached on THE CMS APP after foundations creation",
+      "observedAt": "2026-09-22T10:15:00+05:00"
+    }
+  ],
+  "archivedFiles": [
+    {
+      "fileKey": "vsSIo3gnow6AnjmDgaPTI5",
+      "fileUrl": "https://www.figma.com/design/vsSIo3gnow6AnjmDgaPTI5",
+      "planName": "Budgetwise2",
+      "reason": "MCP quota blocked all canvas operations"
+    }
+  ],
+  "completedSteps": ["P0.a", "P0.b:file-created", "P0.b:replacement-file-created", "P0.c", "P0.d", "P0.e", "P0.f", "P1.a", "P1.b", "P1.c", "P1.d", "P1.e", "P1.f:text-styles", "brand-assets:emerald-purple"]
+}

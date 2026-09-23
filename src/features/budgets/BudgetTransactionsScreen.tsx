@@ -61,7 +61,7 @@ export default function BudgetTransactionsScreen() {
   return (
     <Screen
       title={title}
-      subtitle={`${formatMonthStart(monthStart, profile.locale)} transactions included in this budget.`}
+      subtitle={`${formatMonthStart(monthStart, profile.locale)} transactions counted in this budget.`}
     >
       {loading ? (
         <FeedbackState kind="loading" />
@@ -103,8 +103,8 @@ export default function BudgetTransactionsScreen() {
           {!data.transactions.length ? (
             <FeedbackState
               kind="empty"
-              title="No included transactions"
-              message="Automatic category members and explicitly assigned expenses will appear here."
+              title="No matching transactions"
+              message="Same-name automatic expenses and explicitly assigned expenses will appear here."
             />
           ) : (
             <Card style={styles.listCard}>

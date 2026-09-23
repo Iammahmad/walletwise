@@ -52,6 +52,30 @@ function Navigation() {
           name="auth"
           options={{ title: "Backup & sync", presentation: "modal" }}
         />
+        <Stack.Screen name="settings" options={{ title: "Settings" }} />
+        <Stack.Screen name="savings/index" options={{ title: "Savings" }} />
+        <Stack.Screen
+          name="savings/add"
+          options={{ title: "Add savings", presentation: "modal" }}
+        />
+        <Stack.Screen name="savings/[id]" options={{ title: "Edit savings" }} />
+        <Stack.Screen
+          name="split/new"
+          options={{ title: "New split", presentation: "modal" }}
+        />
+        <Stack.Screen name="split/[id]" options={{ title: "Split details" }} />
+        <Stack.Screen
+          name="split/contact/[id]"
+          options={{ title: "Friend balance" }}
+        />
+        <Stack.Screen
+          name="split/settle"
+          options={{ title: "Settle up", presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="invite/[token]"
+          options={{ title: "WalletWise invitation" }}
+        />
       </Stack>
     </>
   );

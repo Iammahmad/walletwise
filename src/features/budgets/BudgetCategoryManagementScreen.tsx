@@ -9,13 +9,12 @@ import { Screen } from "@/src/components/Screen";
 import {
   deleteBudgetCategory,
   listBudgetCategories,
-  listCategories,
   saveBudgetCategory,
 } from "@/src/db/repository";
 import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
 import { budgetCategoryInputSchema } from "@/src/domain/schemas";
-import type { BudgetCategory, Category } from "@/src/domain/types";
+import type { BudgetCategory } from "@/src/domain/types";
 import { CategoryAppearanceFields } from "@/src/features/categories/CategoryAppearanceFields";
 import type {
   CategoryColor,
@@ -28,17 +27,11 @@ import { useAppStore } from "@/src/state/appStore";
 export default function BudgetCategoryManagementScreen() {
   const { colors } = useTheme();
   const bump = useAppStore((state) => state.bumpDbRevision);
-  const loader = useCallback(async () => {
-    const [budgetCategories, expenseCategories] = await Promise.all([
-      listBudgetCategories(),
-      listCategories("expense"),
-    ]);
-    return { budgetCategories, expenseCategories };
-  }, []);
-  const { data, loading, error, reload } = useReloadable<{
-    budgetCategories: BudgetCategory[];
-    expenseCategories: Category[];
-  }>(loader, { budgetCategories: [], expenseCategories: [] });
+  const loader = useCallback(() => listBudgetCategories(), []);
+  const { data, loading, error, reload } = useReloadable<BudgetCategory[]>(
+    loader,
+    [],
+  );
   const [editing, setEditing] = useState<BudgetCategory | "new" | null>(null);
 
   const remove = (item: BudgetCategory) => {
@@ -80,12 +73,12 @@ export default function BudgetCategoryManagementScreen() {
     >
       <Card style={{ backgroundColor: colors.primarySoft }}>
         <Text style={[styles.helperTitle, { color: colors.primary }]}>
-          Flexible automatic budgets
+          Simple automatic matching
         </Text>
         <Text style={[styles.helperBody, { color: colors.text }]}>
-          Include one or more transaction categories in each budget. An
-          automatic expense can count toward several budgets, such as Food and
-          Household, without creating duplicate transactions.
+          An automatic expense counts toward a budget with the same name. For
+          example, Food counts toward Food when that budget exists. Choose a
+          different budget explicitly when recording the expense.
         </Text>
       </Card>
       {loading ? (
@@ -97,7 +90,7 @@ export default function BudgetCategoryManagementScreen() {
           actionLabel="Try again"
           onAction={() => void reload()}
         />
-      ) : !data.budgetCategories.length ? (
+      ) : !data.length ? (
         <FeedbackState
           kind="empty"
           title="No budget categories"
@@ -107,7 +100,7 @@ export default function BudgetCategoryManagementScreen() {
         />
       ) : (
         <Card style={styles.listCard}>
-          {data.budgetCategories.map((item, index) => (
+          {data.map((item, index) => (
             <View
               key={item.id}
               style={[
@@ -137,9 +130,11 @@ export default function BudgetCategoryManagementScreen() {
                   {item.name}
                 </Text>
                 <Text style={[styles.mapping, { color: colors.textMuted }]}>
-                  {item.categoryNames.length
-                    ? `Includes ${item.categoryNames.join(", ")}`
-                    : "Only explicitly assigned expenses"}
+                  {item.sourceCategoryName &&
+                  item.sourceCategoryName.toLocaleLowerCase() ===
+                    item.name.toLocaleLowerCase()
+                    ? `Automatic for ${item.sourceCategoryName}`
+                    : "Explicit assignment or same-name category"}
                 </Text>
               </Pressable>
               <Pressable
@@ -162,7 +157,6 @@ export default function BudgetCategoryManagementScreen() {
       {editing ? (
         <BudgetCategoryModal
           item={editing === "new" ? null : editing}
-          categories={data.expenseCategories}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -176,12 +170,10 @@ export default function BudgetCategoryManagementScreen() {
 
 function BudgetCategoryModal({
   item,
-  categories,
   onClose,
   onSaved,
 }: {
   item: BudgetCategory | null;
-  categories: Category[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -191,10 +183,7 @@ function BudgetCategoryModal({
     (item?.icon as CategoryIcon | undefined) ?? "pie-chart-outline",
   );
   const [color, setColor] = useState<CategoryColor>(
-    (item?.color as CategoryColor | undefined) ?? "#087F5B",
-  );
-  const [categoryIds, setCategoryIds] = useState<string[]>(
-    item?.categoryIds ?? [],
+    (item?.color as CategoryColor | undefined) ?? "#9A6BFF",
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -205,7 +194,6 @@ function BudgetCategoryModal({
       name,
       icon,
       color,
-      categoryIds,
     };
     const parsed = budgetCategoryInputSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -240,7 +228,7 @@ function BudgetCategoryModal({
     >
       <Screen
         title={item ? "Edit budget category" : "New budget category"}
-        subtitle="Choose which expense categories should count here automatically."
+        subtitle="A same-name expense category matches automatically; other expenses can be assigned explicitly."
       >
         <CategoryAppearanceFields
           name={name}
@@ -254,63 +242,6 @@ function BudgetCategoryModal({
           onIconChange={setIcon}
           onColorChange={setColor}
         />
-        <View style={styles.categoryField}>
-          <Text style={[styles.fieldLabel, { color: colors.text }]}>
-            Included transaction categories
-          </Text>
-          <Text style={[styles.fieldHelp, { color: colors.textMuted }]}>
-            Automatic expenses in every selected category count toward this
-            budget. Leave all unchecked for an explicit-only budget.
-          </Text>
-          <Card style={styles.categoryPicker}>
-            {categories.map((category, index) => {
-              const selected = categoryIds.includes(category.id);
-              return (
-                <Pressable
-                  key={category.id}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  accessibilityLabel={`Include ${category.name}`}
-                  onPress={() =>
-                    setCategoryIds((current) =>
-                      current.includes(category.id)
-                        ? current.filter((id) => id !== category.id)
-                        : [...current, category.id],
-                    )
-                  }
-                  style={[
-                    styles.categoryOption,
-                    index > 0 && {
-                      borderTopColor: colors.border,
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                    },
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.smallIcon,
-                      { backgroundColor: `${category.color}20` },
-                    ]}
-                  >
-                    <Ionicons
-                      name={category.icon as keyof typeof Ionicons.glyphMap}
-                      size={18}
-                      color={category.color}
-                    />
-                  </View>
-                  <Text style={[styles.categoryName, { color: colors.text }]}>
-                    {category.name}
-                  </Text>
-                  <Ionicons
-                    name={selected ? "checkbox" : "square-outline"}
-                    size={24}
-                    color={selected ? colors.primary : colors.textMuted}
-                  />
-                </Pressable>
-              );
-            })}
-          </Card>
-        </View>
         {errors.form ? (
           <Text
             accessibilityRole="alert"
@@ -362,22 +293,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   error: { fontSize: 13, lineHeight: 18 },
-  categoryField: { gap: spacing.xs },
-  fieldLabel: { fontSize: 14, fontWeight: "600" },
-  fieldHelp: { fontSize: 13, lineHeight: 18 },
-  categoryPicker: { paddingVertical: 0 },
-  categoryOption: {
-    minHeight: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  smallIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  categoryName: { flex: 1, fontSize: 15, fontWeight: "600" },
 });

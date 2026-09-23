@@ -1,5 +1,25 @@
-import type { Session } from "@supabase/supabase-js";
-import * as Linking from "expo-linking";
+import {
+  createUserWithEmailAndPassword,
+  deleteUser as deleteFirebaseUser,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  type User,
+} from "firebase/auth";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  writeBatch,
+  type Firestore,
+} from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 
 import {
   getProfile,
@@ -7,137 +27,137 @@ import {
   preparePristineLocalDataForCloudRestore,
   unlinkCloudUser,
 } from "@/src/db/repository";
-import { isExpectedOAuthRedirect, parseOAuthCallback } from "./oauthCallback";
-import { openOAuthSession } from "./oauthBrowser";
-import { requireSupabase } from "./supabase";
+import {
+  requireFirebaseAuth,
+  requireFirebaseFunctions,
+  requireFirestoreDb,
+  isFirebaseFunctionsEnabled,
+} from "./firebase/config";
 
-async function connectLocalData(userId: string): Promise<void> {
-  const supabase = requireSupabase();
+const PRIVATE_CLOUD_COLLECTIONS = [
+  "accounts",
+  "categories",
+  "budgetCategories",
+  "transactions",
+  "budgets",
+  "savings",
+  "splitContacts",
+  "splitSettlements",
+  "pushTokens",
+] as const;
+
+async function deletePrivateCollection(
+  firestore: Firestore,
+  userId: string,
+  collectionName: string,
+): Promise<void> {
+  while (true) {
+    const snapshot = await getDocs(
+      query(collection(firestore, "users", userId, collectionName), limit(400)),
+    );
+    if (snapshot.empty) return;
+    const batch = writeBatch(firestore);
+    snapshot.docs.forEach((item) => batch.delete(item.ref));
+    await batch.commit();
+  }
+}
+
+async function deleteFreePlanAccount(user: User): Promise<void> {
+  const firestore = requireFirestoreDb();
+  for (const collectionName of PRIVATE_CLOUD_COLLECTIONS) {
+    await deletePrivateCollection(firestore, user.uid, collectionName);
+  }
+  await deleteDoc(doc(firestore, "users", user.uid));
+  await deleteFirebaseUser(user);
+}
+
+async function connectLocalData(user: User): Promise<User> {
   const localProfile = await getProfile();
-  if (localProfile.userId && localProfile.userId !== userId) {
+  if (localProfile.userId && localProfile.userId !== user.uid) {
+    await firebaseSignOut(requireFirebaseAuth());
     throw new Error(
       "This device ledger is linked to a different account. Sign in with that account, or reset local data before switching accounts.",
     );
   }
-  if (localProfile.userId === userId) return;
-  const { data: remoteProfile, error } = await supabase
-    .from("profiles")
-    .select("user_id")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error) throw error;
-  if (remoteProfile && (await preparePristineLocalDataForCloudRestore(userId)))
-    return;
-  await linkLocalDataToUser(userId);
-}
-
-async function connectSession(session: Session): Promise<Session> {
-  const supabase = requireSupabase();
-  try {
-    await connectLocalData(session.user.id);
-  } catch (connectError) {
-    await supabase.auth.signOut();
-    throw connectError;
+  if (localProfile.userId === user.uid) return user;
+  const remoteProfile = await getDoc(
+    doc(requireFirestoreDb(), "users", user.uid),
+  );
+  if (
+    remoteProfile.exists() &&
+    (await preparePristineLocalDataForCloudRestore(user.uid))
+  ) {
+    return user;
   }
-  return session;
+  await linkLocalDataToUser(user.uid);
+  return user;
 }
 
-export async function getSession(): Promise<Session | null> {
-  const supabase = requireSupabase();
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  return data.session;
+export function getCurrentUser(): User | null {
+  return requireFirebaseAuth().currentUser;
 }
 
-export async function signIn(
-  email: string,
-  password: string,
-): Promise<Session> {
-  const supabase = requireSupabase();
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: email.trim(),
+export async function signIn(email: string, password: string): Promise<User> {
+  const credential = await signInWithEmailAndPassword(
+    requireFirebaseAuth(),
+    email.trim(),
     password,
-  });
-  if (error) throw error;
-  if (!data.session) throw new Error("Sign-in did not return a session.");
-  return connectSession(data.session);
+  );
+  if (!credential.user.emailVerified) {
+    await sendEmailVerification(credential.user).catch(() => undefined);
+    await firebaseSignOut(requireFirebaseAuth());
+    throw new Error(
+      "Verify your email before signing in. We sent a new verification link.",
+    );
+  }
+  return connectLocalData(credential.user);
 }
 
 export async function signUp(
   email: string,
   password: string,
-): Promise<{ session: Session | null; confirmationRequired: boolean }> {
-  const supabase = requireSupabase();
-  const { data, error } = await supabase.auth.signUp({
-    email: email.trim(),
+): Promise<{ user: User; confirmationRequired: boolean }> {
+  const credential = await createUserWithEmailAndPassword(
+    requireFirebaseAuth(),
+    email.trim(),
     password,
-  });
-  if (error) throw error;
-  if (data.session) await connectSession(data.session);
-  return { session: data.session, confirmationRequired: !data.session };
+  );
+  await sendEmailVerification(credential.user);
+  await firebaseSignOut(requireFirebaseAuth());
+  return { user: credential.user, confirmationRequired: true };
 }
 
-export function getGoogleOAuthRedirectUrl(): string {
-  return Linking.createURL("auth");
-}
-
-async function sessionFromOAuthCallback(
-  callbackUrl: string,
-  redirectUrl: string,
-): Promise<Session> {
-  if (!isExpectedOAuthRedirect(callbackUrl, redirectUrl)) {
-    throw new Error(
-      "Google returned to an unexpected application address. Sign-in was stopped.",
-    );
-  }
-
-  const supabase = requireSupabase();
-  const credentials = parseOAuthCallback(callbackUrl);
-  const result =
-    credentials.flow === "pkce"
-      ? await supabase.auth.exchangeCodeForSession(credentials.code)
-      : await supabase.auth.setSession({
-          access_token: credentials.accessToken,
-          refresh_token: credentials.refreshToken,
-        });
-  if (result.error) throw result.error;
-  if (!result.data.session)
-    throw new Error("Google sign-in did not return a session.");
-  return connectSession(result.data.session);
-}
-
-export async function signInWithGoogle(): Promise<Session | null> {
-  const supabase = requireSupabase();
-  const redirectUrl = getGoogleOAuthRedirectUrl();
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: redirectUrl,
-      skipBrowserRedirect: true,
-      queryParams: { prompt: "select_account" },
-    },
-  });
-  if (error) throw error;
-  if (!data.url)
-    throw new Error("Google sign-in could not be started. Please try again.");
-
-  const result = await openOAuthSession(data.url, redirectUrl);
-  if (result.type !== "success") return null;
-  return sessionFromOAuthCallback(result.url, redirectUrl);
+export async function signInWithGoogleIdToken(idToken: string): Promise<User> {
+  if (!idToken.trim())
+    throw new Error("Google did not return a valid identity token.");
+  const credential = GoogleAuthProvider.credential(idToken);
+  const result = await signInWithCredential(requireFirebaseAuth(), credential);
+  return connectLocalData(result.user);
 }
 
 export async function signOut(): Promise<void> {
-  const supabase = requireSupabase();
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  await firebaseSignOut(requireFirebaseAuth());
   await unlinkCloudUser();
 }
 
 export async function deleteCloudAccount(): Promise<void> {
-  const supabase = requireSupabase();
-  const { error } = await supabase.functions.invoke("delete-account", {
-    body: { confirmation: "DELETE" },
-  });
-  if (error) throw error;
+  const auth = requireFirebaseAuth();
+  const user = auth.currentUser;
+  if (!user)
+    throw new Error("Sign in again before deleting your cloud account.");
+  if (isFirebaseFunctionsEnabled) {
+    const removeData = httpsCallable<
+      { confirmation: "DELETE" },
+      { deleted: boolean }
+    >(requireFirebaseFunctions(), "deleteAccount");
+    await removeData({ confirmation: "DELETE" });
+    // The callable deletes the Firebase Auth user on the trusted server.
+    await firebaseSignOut(auth).catch(() => undefined);
+  } else {
+    // Spark/free mode has no shared server records because invitations and
+    // shared writes are disabled. The signed-in owner can delete their private
+    // tree through Security Rules, then remove their own Auth identity.
+    await deleteFreePlanAccount(user);
+  }
   await unlinkCloudUser();
 }

@@ -178,10 +178,10 @@ export function TransactionForm({
 
   const selectedAccount = accounts.find((item) => item.id === accountId);
   const selectedCategory = categories.find((item) => item.id === categoryId);
-  const automaticBudgetCategories = useMemo(
-    () =>
-      budgetCategories.filter((item) => item.categoryIds.includes(categoryId)),
-    [budgetCategories, categoryId],
+  const automaticBudgetCategory = budgetCategories.find(
+    (item) =>
+      item.name.trim().toLocaleLowerCase() ===
+      selectedCategory?.name.trim().toLocaleLowerCase(),
   );
   const selectedBudgetCategory = budgetCategories.find(
     (item) => item.id === budgetSelection,
@@ -215,9 +215,9 @@ export function TransactionForm({
       {
         value: "auto",
         label: "Automatic",
-        detail: automaticBudgetCategories.length
-          ? `Counts toward ${automaticBudgetCategories.map((item) => item.name).join(", ")}`
-          : "This category is not included in a budget",
+        detail: automaticBudgetCategory
+          ? `Uses ${automaticBudgetCategory.name}`
+          : "No same-name budget; saves as a regular expense",
       },
       {
         value: "none",
@@ -227,10 +227,10 @@ export function TransactionForm({
       ...budgetCategories.map((item) => ({
         value: item.id,
         label: item.name,
-        detail: "Override automatic membership",
+        detail: "Use this budget instead",
       })),
     ],
-    [automaticBudgetCategories, budgetCategories],
+    [automaticBudgetCategory, budgetCategories],
   );
 
   const resetAfterSave = () => {
@@ -391,9 +391,9 @@ export function TransactionForm({
           label="Budget"
           value={
             budgetSelection === "auto"
-              ? automaticBudgetCategories.length
-                ? `Automatic · ${automaticBudgetCategories.map((item) => item.name).join(", ")}`
-                : "Automatic · No matching budget"
+              ? automaticBudgetCategory
+                ? `Automatic · ${automaticBudgetCategory.name}`
+                : "Automatic · Regular expense"
               : budgetSelection === "none"
                 ? "No budget"
                 : (selectedBudgetCategory?.name ??

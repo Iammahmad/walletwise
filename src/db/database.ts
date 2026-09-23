@@ -201,12 +201,6 @@ PRAGMA user_version = 2;
 `;
 
 const MIGRATION_3 = `
-ALTER TABLE budget_categories ADD COLUMN category_ids_json TEXT NOT NULL DEFAULT '[]';
-
-UPDATE budget_categories
-SET category_ids_json = printf('["%s"]', source_category_id)
-WHERE source_category_id IS NOT NULL AND category_ids_json = '[]';
-
 ALTER TABLE transactions ADD COLUMN budget_assignment_mode TEXT NOT NULL DEFAULT 'auto'
   CHECK(budget_assignment_mode IN ('auto', 'explicit', 'none'));
 
@@ -216,7 +210,12 @@ SET budget_assignment_mode = CASE
   WHEN EXISTS (
     SELECT 1 FROM budget_categories bc
     WHERE bc.id = transactions.budget_category_id
-      AND bc.source_category_id = transactions.category_id
+      AND (
+        bc.source_category_id = transactions.category_id
+        OR lower(trim(bc.name)) = lower(trim((
+          SELECT c.name FROM categories c WHERE c.id = transactions.category_id
+        )))
+      )
   ) THEN 'auto'
   ELSE 'explicit'
 END;
@@ -230,6 +229,124 @@ CREATE INDEX IF NOT EXISTS idx_transactions_budget_assignment
 PRAGMA user_version = 3;
 `;
 
+const MIGRATION_4 = `
+CREATE TABLE IF NOT EXISTS savings (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  local_owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+  currency TEXT NOT NULL CHECK(length(currency) = 3),
+  occurred_at TEXT NOT NULL,
+  note TEXT,
+  source TEXT NOT NULL CHECK(source IN ('manual', 'voice')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'local' CHECK(sync_status IN ('local', 'pending', 'synced', 'error')),
+  local_updated_at TEXT NOT NULL,
+  last_synced_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS split_contacts (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  local_owner_id TEXT NOT NULL,
+  remote_user_id TEXT,
+  display_name TEXT NOT NULL,
+  email TEXT,
+  status TEXT NOT NULL DEFAULT 'local' CHECK(status IN ('local', 'invited', 'connected')),
+  invite_token TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'local' CHECK(sync_status IN ('local', 'pending', 'synced', 'error')),
+  local_updated_at TEXT NOT NULL,
+  last_synced_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS splits (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  local_owner_id TEXT NOT NULL,
+  created_by_user_id TEXT,
+  description TEXT NOT NULL,
+  split_type TEXT NOT NULL CHECK(split_type IN ('equal', 'loan')),
+  loan_direction TEXT CHECK(loan_direction IN ('lent', 'borrowed') OR loan_direction IS NULL),
+  total_minor INTEGER NOT NULL CHECK(total_minor > 0),
+  currency TEXT NOT NULL CHECK(length(currency) = 3),
+  occurred_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'settled')),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'local' CHECK(sync_status IN ('local', 'pending', 'synced', 'error')),
+  local_updated_at TEXT NOT NULL,
+  last_synced_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS split_participants (
+  id TEXT PRIMARY KEY NOT NULL,
+  split_id TEXT NOT NULL REFERENCES splits(id) ON DELETE CASCADE,
+  contact_id TEXT REFERENCES split_contacts(id) ON DELETE SET NULL,
+  remote_user_id TEXT,
+  display_name TEXT NOT NULL,
+  is_owner INTEGER NOT NULL CHECK(is_owner IN (0, 1)),
+  share_minor INTEGER NOT NULL CHECK(share_minor >= 0),
+  paid_minor INTEGER NOT NULL CHECK(paid_minor >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS split_settlements (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT,
+  local_owner_id TEXT NOT NULL,
+  split_id TEXT REFERENCES splits(id) ON DELETE SET NULL,
+  contact_id TEXT NOT NULL REFERENCES split_contacts(id),
+  direction TEXT NOT NULL CHECK(direction IN ('received', 'paid')),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+  currency TEXT NOT NULL CHECK(length(currency) = 3),
+  occurred_at TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'local' CHECK(sync_status IN ('local', 'pending', 'synced', 'error')),
+  local_updated_at TEXT NOT NULL,
+  last_synced_at TEXT
+);
+
+DROP INDEX IF EXISTS idx_outbox_retry;
+ALTER TABLE sync_outbox RENAME TO sync_outbox_v3;
+CREATE TABLE sync_outbox (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('profiles', 'accounts', 'categories', 'budget_categories', 'transactions', 'budgets', 'savings', 'split_contacts', 'splits', 'split_settlements')),
+  entity_id TEXT NOT NULL,
+  operation TEXT NOT NULL DEFAULT 'upsert' CHECK(operation IN ('upsert', 'delete')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(entity_type, entity_id)
+);
+INSERT OR IGNORE INTO sync_outbox SELECT * FROM sync_outbox_v3;
+DROP TABLE sync_outbox_v3;
+
+CREATE INDEX IF NOT EXISTS idx_savings_owner_date ON savings(local_owner_id, occurred_at DESC, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_split_contacts_owner ON split_contacts(local_owner_id, status, deleted_at, display_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_split_contacts_remote ON split_contacts(local_owner_id, remote_user_id) WHERE remote_user_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_splits_owner_date ON splits(local_owner_id, occurred_at DESC, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_split_participants_split ON split_participants(split_id, is_owner);
+CREATE INDEX IF NOT EXISTS idx_split_participants_contact ON split_participants(contact_id, split_id);
+CREATE INDEX IF NOT EXISTS idx_split_settlements_contact ON split_settlements(local_owner_id, contact_id, occurred_at DESC, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_retry ON sync_outbox(user_id, next_retry_at, created_at);
+PRAGMA user_version = 4;
+`;
+
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>(
     "PRAGMA user_version",
@@ -238,6 +355,7 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   if (version < 1) await db.execAsync(MIGRATION_1);
   if (version < 2) await db.execAsync(MIGRATION_2);
   if (version < 3) await db.execAsync(MIGRATION_3);
+  if (version < 4) await db.execAsync(MIGRATION_4);
 }
 
 async function seed(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -320,12 +438,11 @@ async function seed(db: SQLite.SQLiteDatabase): Promise<void> {
       if (category.type === "expense") {
         await db.runAsync(
           `INSERT INTO budget_categories
-           (id, user_id, local_owner_id, source_category_id, category_ids_json, name, icon, color, created_at, updated_at, sync_status, local_updated_at)
-           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'local', ?)`,
+           (id, user_id, local_owner_id, source_category_id, name, icon, color, created_at, updated_at, sync_status, local_updated_at)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 'local', ?)`,
           categoryId,
           ownerId,
           categoryId,
-          JSON.stringify([categoryId]),
           category.name,
           category.icon,
           category.color,

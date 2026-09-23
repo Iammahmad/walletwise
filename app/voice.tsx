@@ -34,6 +34,7 @@ import type { Transaction, VoiceDraft, VoiceState } from "@/src/domain/types";
 import { parseVoiceCommand } from "@/src/domain/voiceParser";
 import { parseWithCloudAi } from "@/src/services/ai";
 import { normalizeError } from "@/src/services/errors";
+import { isFirebaseFunctionsEnabled } from "@/src/services/firebase/config";
 import {
   buildSpeechVocabulary,
   chooseAndroidRecognitionService,
@@ -163,7 +164,12 @@ export default function VoiceScreen() {
         }
         if (result.kind === "transactions") {
           let drafts = result.drafts;
-          if (result.missingFields.length && profile.cloudAiEnabled && online) {
+          if (
+            result.missingFields.length &&
+            profile.cloudAiEnabled &&
+            isFirebaseFunctionsEnabled &&
+            online
+          ) {
             setMessage(
               "Local parsing needs help. Asking the protected cloud parser…",
             );
@@ -389,7 +395,7 @@ export default function VoiceScreen() {
         ExpoSpeechRecognitionModule.abort();
         setState("idle");
         setMessage(
-          "Voice entry stopped when SpendSpeak left the foreground. Tap to try again.",
+          "Voice entry stopped when WalletWise left the foreground. Tap to try again.",
         );
       }
     });
@@ -652,7 +658,7 @@ export default function VoiceScreen() {
         ) : null}
         <Text style={[styles.privacy, { color: colors.textMuted }]}>
           Audio is processed by the selected device recognition service and is
-          never saved by SpendSpeak.
+          never saved by WalletWise.
         </Text>
       </View>
     </Screen>

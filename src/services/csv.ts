@@ -17,7 +17,7 @@ export function transactionsToCsv(transactions: Transaction[]): string {
     "currency",
     "merchant",
     "category",
-    "budget_categories",
+    "budget_category",
     "account",
     "occurred_at",
     "note",
@@ -51,12 +51,12 @@ export async function exportTransactionsCsv(
   if (!(await Sharing.isAvailableAsync()))
     throw new Error("File sharing is unavailable on this device.");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = new File(Paths.cache, `spendspeak-transactions-${stamp}.csv`);
+  const file = new File(Paths.cache, `walletwise-transactions-${stamp}.csv`);
   file.create({ overwrite: true, intermediates: true });
   file.write(transactionsToCsv(transactions));
   await Sharing.shareAsync(file.uri, {
     mimeType: "text/csv",
-    dialogTitle: "Export SpendSpeak transactions",
+    dialogTitle: "Export WalletWise transactions",
     UTI: "public.comma-separated-values-text",
   });
 }

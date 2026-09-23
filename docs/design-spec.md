@@ -1,4 +1,4 @@
-# SpendSpeak visual acceptance reference
+# WalletWise visual acceptance reference
 
 This compact wireframe specification translates the design direction in `codex.md` into representative screen layouts. It is intentionally code-native; final screens use the shared tokens and components rather than image-based mockups.
 
@@ -16,7 +16,7 @@ This compact wireframe specification translates the design direction in `codex.m
 └─────────────────────────────────┘
 ```
 
-- Warm off-white/light and charcoal/dark backgrounds.
+- Purple-tinted light and deep-purple dark backgrounds.
 - 24-point page margin; spacing follows the 8-point family with 4/12-point optical exceptions.
 - Cards use 16-20 point radii, tonal separation, and hairline borders.
 - All actions are at least 44 x 44 points and remain reachable with one hand.
@@ -51,7 +51,7 @@ Recent transactions       See all
 ╰───────────────────────────────╯
 ```
 
-The emerald summary is the single dominant visual. Category bars are the only chart and have readable text equivalents.
+The Purple summary is the dominant visual. Charts also include readable text equivalents.
 
 ## Transactions
 
@@ -108,7 +108,7 @@ Labels remain visible. Category/account/currency choices use bottom sheets. Vali
 
        [ Cancel ]   [ Stop ]
 
-Audio is never saved by SpendSpeak.
+Audio is never saved by WalletWise.
 ```
 
 Only active listening loops/pulses. State is announced to screen readers and never relies on color alone.

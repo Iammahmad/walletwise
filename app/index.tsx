@@ -9,6 +9,6 @@ export default function Index() {
   const error = useAppStore((state) => state.initializationError);
   const profile = useAppStore((state) => state.profile);
   if (error) return <Screen><FeedbackState kind="error" title="Local database unavailable" message={error} /></Screen>;
-  if (!initialized || !profile) return <Screen><FeedbackState kind="loading" title="Opening SpendSpeak" message="Preparing your private local ledger." /></Screen>;
+  if (!initialized || !profile) return <Screen><FeedbackState kind="loading" title="Opening WalletWise" message="Preparing your private local ledger." /></Screen>;
   return <Redirect href={profile.onboardingCompleted ? '/(tabs)' : '/onboarding'} />;
 }

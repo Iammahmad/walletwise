@@ -3,7 +3,7 @@ import { Tabs } from 'expo-router';
 
 import { useTheme } from '@/src/design/ThemeProvider';
 
-const icons = { index: 'home-outline', transactions: 'list-outline', add: 'add-circle-outline', budgets: 'pie-chart-outline', settings: 'settings-outline' } as const;
+const icons = { index: 'home-outline', transactions: 'receipt-outline', add: 'add-circle', budgets: 'pie-chart-outline', splits: 'people-outline', settings: 'settings-outline' } as const;
 
 export default function TabsLayout() {
   const { colors } = useTheme();
@@ -17,10 +17,11 @@ export default function TabsLayout() {
       tabBarIcon: ({ color, size }) => <Ionicons name={icons[route.name as keyof typeof icons] ?? 'ellipse-outline'} color={color} size={route.name === 'add' ? size + 5 : size} />,
     })}>
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
-      <Tabs.Screen name="transactions" options={{ title: 'Transactions' }} />
+      <Tabs.Screen name="transactions" options={{ title: 'Activity' }} />
       <Tabs.Screen name="add" options={{ title: 'Add' }} />
       <Tabs.Screen name="budgets" options={{ title: 'Budgets' }} />
-      <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+      <Tabs.Screen name="splits" options={{ title: 'Splits' }} />
+      <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { type Href, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import { Button } from "@/src/components/Button";
@@ -10,9 +10,12 @@ import { Screen } from "@/src/components/Screen";
 import { SelectionSheet } from "@/src/components/SelectionSheet";
 import { getProfile, resetLocalData, updateProfile } from "@/src/db/repository";
 import { SUPPORTED_CURRENCIES } from "@/src/domain/money";
-import { getSession, signOut } from "@/src/services/auth";
+import { getCurrentUser, signOut } from "@/src/services/auth";
 import { normalizeError } from "@/src/services/errors";
-import { isCloudConfigured } from "@/src/services/supabase";
+import {
+  isFirebaseConfigured,
+  isFirebaseFunctionsEnabled,
+} from "@/src/services/firebase/config";
 import { syncNow } from "@/src/services/sync";
 import { spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
@@ -37,18 +40,14 @@ export default function SettingsScreen() {
   const syncState = useAppStore((state) => state.syncState);
   const syncMessage = useAppStore((state) => state.syncMessage);
   const setSyncState = useAppStore((state) => state.setSyncState);
-  const [email, setEmail] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(() =>
+    isFirebaseConfigured ? (getCurrentUser()?.email ?? null) : null,
+  );
   const [sheet, setSheet] = useState<
     "currency" | "locale" | "timezone" | "theme" | null
   >(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isCloudConfigured)
-      void getSession()
-        .then((session) => setEmail(session?.user.email ?? null))
-        .catch(() => setEmail(null));
-  }, []);
   const save = async (changes: Parameters<typeof updateProfile>[0]) => {
     try {
       const next = await updateProfile(changes);
@@ -92,7 +91,7 @@ export default function SettingsScreen() {
   const reset = () =>
     Alert.alert(
       "Reset all local data?",
-      "This permanently removes local transactions, budgets, and preferences from this device. Cloud data is not deleted.",
+      "This permanently removes local transactions, budgets, savings, splits, friends, and preferences from this device. Cloud data is not deleted.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -125,6 +124,12 @@ export default function SettingsScreen() {
         </Card>
       ) : null}
       <Section title="Preferences">
+        <SettingRow
+          icon="wallet-outline"
+          label="Savings"
+          value="Goals and contributions"
+          onPress={() => router.push("/savings")}
+        />
         <SettingRow
           icon="pricetags-outline"
           label="Transaction categories"
@@ -169,17 +174,21 @@ export default function SettingsScreen() {
               Cloud AI parsing
             </Text>
             <Text style={[styles.settingValue, { color: colors.textMuted }]}>
-              {!isCloudConfigured
-                ? "Unavailable until Supabase is configured"
-                : !email
-                  ? "Sign in first"
-                  : "Local parser always runs first"}
+              {!isFirebaseConfigured
+                ? "Unavailable until Firebase is configured"
+                : !isFirebaseFunctionsEnabled
+                  ? "Unavailable on the current free cloud plan"
+                  : !email
+                    ? "Sign in first"
+                    : "Local parser always runs first"}
             </Text>
           </View>
           <Switch
             accessibilityLabel="Cloud AI parsing"
-            value={profile.cloudAiEnabled}
-            disabled={!isCloudConfigured || !email}
+            value={profile.cloudAiEnabled && isFirebaseFunctionsEnabled}
+            disabled={
+              !isFirebaseConfigured || !isFirebaseFunctionsEnabled || !email
+            }
             onValueChange={(value) => void save({ cloudAiEnabled: value })}
             trackColor={{ true: colors.primary }}
           />
@@ -188,7 +197,8 @@ export default function SettingsScreen() {
           icon="cloud-outline"
           label="Backup & sync"
           value={
-            email ?? (isCloudConfigured ? "Not signed in" : "Local-only mode")
+            email ??
+            (isFirebaseConfigured ? "Not signed in" : "Local-only mode")
           }
           onPress={() => (email ? void synchronize() : router.push("/auth"))}
         />
@@ -213,6 +223,13 @@ export default function SettingsScreen() {
             {syncMessage ? ` · ${syncMessage}` : ""}
           </Text>
         </View>
+        {!isFirebaseFunctionsEnabled ? (
+          <Text style={[styles.privacy, { color: colors.textMuted }]}>
+            Free cloud mode: authentication and private Firestore backup work.
+            Connected invitations, push notifications, and cloud AI stay off;
+            local Splits continue to work on this device.
+          </Text>
+        ) : null}
         {email ? (
           <Button label="Sign out" variant="secondary" onPress={logout} />
         ) : null}
@@ -238,7 +255,7 @@ export default function SettingsScreen() {
         ) : null}
       </Section>
       <Text style={[styles.version, { color: colors.textMuted }]}>
-        SpendSpeak {Constants.expoConfig?.version ?? "development"} ·
+        WalletWise {Constants.expoConfig?.version ?? "development"} ·
         Local-first
       </Text>
       <SelectionSheet

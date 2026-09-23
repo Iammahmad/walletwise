@@ -67,7 +67,6 @@ function createTestDatabase(userId: string | null) {
         user_id: userId,
         local_owner_id: "local-owner-1",
         source_category_id: CATEGORY_FOOD_ID,
-        category_ids_json: JSON.stringify([CATEGORY_FOOD_ID]),
         name: "Food",
         icon: "restaurant-outline",
         color: "#D97706",
@@ -88,44 +87,46 @@ function createTestDatabase(userId: string | null) {
       operation(),
     ),
     getAllAsync: jest.fn(async (sql: string, ...params: unknown[]) => {
-      if (sql.includes("SELECT * FROM budget_categories")) {
-        return [...budgetCategories.values()].filter(
-          (row) => row.local_owner_id === params[0] && row.deleted_at == null,
-        );
-      }
-      if (sql.includes("SELECT id, name FROM categories")) {
-        return [...categories.values()]
+      if (sql.includes("SELECT bc.*")) {
+        return [...budgetCategories.values()]
           .filter(
-            (row) =>
-              row.local_owner_id === params[0] &&
-              row.transaction_type === "expense" &&
-              row.deleted_at == null,
+            (row) => row.local_owner_id === params[0] && row.deleted_at == null,
           )
-          .map((row) => ({ id: row.id, name: row.name }));
-      }
-      if (sql.includes("SELECT id FROM categories") && sql.includes("id IN")) {
-        const ids = new Set(params.slice(1).map(String));
-        return [...categories.values()]
-          .filter(
-            (row) =>
-              row.local_owner_id === params[0] &&
-              row.transaction_type === "expense" &&
-              row.deleted_at == null &&
-              ids.has(String(row.id)),
-          )
-          .map((row) => ({ id: row.id }));
+          .map((row) => ({
+            ...row,
+            source_category_name: row.source_category_id
+              ? (categories.get(String(row.source_category_id))?.name ?? null)
+              : null,
+          }));
       }
       if (sql.includes("FROM transactions t")) {
-        return [...transactions.values()].map((row) => {
+        let matchingTransactions = [...transactions.values()];
+        if (sql.includes("t.budget_assignment_mode = 'explicit'")) {
+          const budgetId = String(params[1]);
+          const budgetName = String(params[2]).toLocaleLowerCase();
+          matchingTransactions = matchingTransactions.filter((row) => {
+            const isExplicit =
+              row.budget_assignment_mode === "explicit" &&
+              row.budget_category_id === budgetId;
+            const categoryName =
+              categories.get(String(row.category_id))?.name ?? "";
+            const isAutomatic =
+              row.budget_assignment_mode === "auto" &&
+              String(categoryName).toLocaleLowerCase() === budgetName;
+            return isExplicit || isAutomatic;
+          });
+        }
+        return matchingTransactions.map((row) => {
+          const category = categories.get(String(row.category_id));
           const budget = row.budget_category_id
             ? budgetCategories.get(String(row.budget_category_id))
             : null;
           return {
             ...row,
             account_name: "Cash",
-            category_name: "Food",
-            category_icon: "restaurant-outline",
-            category_color: "#D97706",
+            category_name: category?.name ?? "Food",
+            category_icon: category?.icon ?? "restaurant-outline",
+            category_color: category?.color ?? "#D97706",
             budget_category_name: budget?.name ?? null,
             budget_category_icon: budget?.icon ?? null,
             budget_category_color: budget?.color ?? null,
@@ -296,42 +297,31 @@ function createTestDatabase(userId: string | null) {
           last_synced_at: null,
         });
       } else if (sql.includes("INSERT INTO budget_categories")) {
-        const cloudMerge = params.length >= 14;
-        const id = params[0];
-        const rowUserId = params[1];
-        const sourceCategoryId = params[2];
-        const categoryIdsJson = params[3];
-        const name = params[4];
-        const icon = params[5];
-        const color = params[6];
-        const createdAt = params[7];
-        const updatedAt = params[8];
-        const deletedAt = cloudMerge ? params[9] : null;
-        const localOwnerId = cloudMerge ? params[10] : params[2];
-        const localSourceCategoryId = cloudMerge ? sourceCategoryId : params[3];
-        const localCategoryIdsJson = cloudMerge ? categoryIdsJson : params[4];
-        const localName = cloudMerge ? name : params[5];
-        const localIcon = cloudMerge ? icon : params[6];
-        const localColor = cloudMerge ? color : params[7];
-        const localCreatedAt = cloudMerge ? createdAt : params[8];
-        const localUpdatedAtValue = cloudMerge ? updatedAt : params[9];
-        const syncStatus = cloudMerge ? params[11] : params[10];
-        const localUpdatedAt = cloudMerge ? params[12] : params[11];
+        const [
+          id,
+          rowUserId,
+          localOwnerId,
+          sourceCategoryId,
+          name,
+          icon,
+          color,
+          createdAt,
+          updatedAt,
+          syncStatus,
+          localUpdatedAt,
+        ] = params;
         budgetCategories.set(String(id), {
           id: String(id),
           user_id: rowUserId == null ? null : String(rowUserId),
           local_owner_id: String(localOwnerId),
           source_category_id:
-            localSourceCategoryId == null
-              ? null
-              : String(localSourceCategoryId),
-          category_ids_json: String(localCategoryIdsJson),
-          name: String(localName),
-          icon: String(localIcon),
-          color: String(localColor),
-          created_at: String(localCreatedAt),
-          updated_at: String(localUpdatedAtValue),
-          deleted_at: deletedAt == null ? null : String(deletedAt),
+            sourceCategoryId == null ? null : String(sourceCategoryId),
+          name: String(name),
+          icon: String(icon),
+          color: String(color),
+          created_at: String(createdAt),
+          updated_at: String(updatedAt),
+          deleted_at: null,
           sync_status: String(syncStatus),
           local_updated_at: String(localUpdatedAt),
           last_synced_at: null,
@@ -547,11 +537,10 @@ describe("local transaction repository integration", () => {
       name: "Eating Out",
       icon: "restaurant-outline",
       color: "#DB2777",
-      categoryIds: [],
     });
     expect(created).toMatchObject({
       name: "Eating Out",
-      categoryIds: [],
+      sourceCategoryId: null,
       syncStatus: "pending",
     });
 
@@ -560,12 +549,11 @@ describe("local transaction repository integration", () => {
       name: "Dining Out",
       icon: "cafe-outline",
       color: "#7C3AED",
-      categoryIds: [],
     });
     expect(edited).toMatchObject({
       id: created.id,
       name: "Dining Out",
-      categoryIds: [],
+      sourceCategoryId: null,
     });
 
     await deleteBudgetCategory(created.id);
@@ -576,7 +564,7 @@ describe("local transaction repository integration", () => {
     });
   });
 
-  it("stores one category in multiple automatic budgets and serializes memberships for cloud sync", async () => {
+  it("uses only the same-name budget automatically and supports an explicit different budget", async () => {
     const state = createTestDatabase("user-1");
     jest.mocked(getDatabase).mockResolvedValue(state.db as never);
 
@@ -584,21 +572,22 @@ describe("local transaction repository integration", () => {
       name: "Household",
       icon: "home-outline",
       color: "#087F5B",
-      categoryIds: [CATEGORY_FOOD_ID],
     });
     expect(household).toMatchObject({
-      categoryIds: [CATEGORY_FOOD_ID],
-      categoryNames: ["Food"],
+      name: "Household",
+      sourceCategoryId: null,
     });
 
     const transaction = await saveTransaction(input);
     expect(transaction).toMatchObject({
       budgetAssignmentMode: "auto",
-      budgetCategoryName: expect.stringContaining("Food"),
+      budgetCategoryName: "Food",
     });
-    expect(transaction.budgetCategoryName).toContain("Household");
     await expect(
       listTransactions({ budgetCategoryId: household.id }),
+    ).resolves.toEqual([]);
+    await expect(
+      listTransactions({ budgetCategoryId: BUDGET_FOOD_ID }),
     ).resolves.toEqual([
       expect.objectContaining({
         id: transaction.id,
@@ -606,32 +595,27 @@ describe("local transaction repository integration", () => {
       }),
     ]);
 
+    await saveTransaction({
+      ...input,
+      id: transaction.id,
+      budgetCategoryId: household.id,
+    });
+    await expect(
+      listTransactions({ budgetCategoryId: household.id }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: transaction.id,
+        budgetAssignmentMode: "explicit",
+        budgetCategoryId: household.id,
+      }),
+    ]);
+    await expect(
+      listTransactions({ budgetCategoryId: BUDGET_FOOD_ID }),
+    ).resolves.toEqual([]);
+
     await expect(
       getCloudPayload("budget_categories", household.id),
-    ).resolves.toEqual(
-      expect.objectContaining({
-        category_ids: [CATEGORY_FOOD_ID],
-      }),
-    );
-
-    const remoteId = "00000000-0000-4000-8000-000000000099";
-    await mergeRemoteRows("budget_categories", [
-      {
-        id: remoteId,
-        user_id: "user-1",
-        source_category_id: null,
-        category_ids: [CATEGORY_FOOD_ID],
-        name: "Shared household",
-        icon: "home-outline",
-        color: "#087F5B",
-        created_at: "2026-09-18T00:00:00.000Z",
-        updated_at: "2026-09-18T00:00:00.000Z",
-        deleted_at: null,
-      },
-    ]);
-    expect(state.budgetCategories.get(remoteId)?.category_ids_json).toBe(
-      JSON.stringify([CATEGORY_FOOD_ID]),
-    );
+    ).resolves.not.toHaveProperty("category_ids");
   });
 
   it("clears only a pristine local shell and then accepts the authenticated cloud profile", async () => {

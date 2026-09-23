@@ -35,7 +35,7 @@ describe("CSV export", () => {
     const csv = transactionsToCsv([transaction]);
     expect(csv).toContain("type,amount,currency");
     expect(csv).toContain("expense,1250.50,PKR");
-    expect(csv).toContain("budget_categories");
+    expect(csv).toContain("budget_category");
     expect(csv).toContain("Household food");
     expect(csv).toContain('"Metro, Main"');
     expect(csv).toContain('"Milk\nand bread"');

@@ -1,8 +1,21 @@
 import * as repository from "@/src/db/repository";
-import * as OAuthBrowser from "@/src/services/oauthBrowser";
-
-import { signIn, signInWithGoogle } from "@/src/services/auth";
-import { requireSupabase } from "@/src/services/supabase";
+import {
+  deleteCloudAccount,
+  signIn,
+  signInWithGoogleIdToken,
+} from "@/src/services/auth";
+import {
+  requireFirebaseAuth,
+  requireFirestoreDb,
+} from "@/src/services/firebase/config";
+import {
+  GoogleAuthProvider,
+  deleteUser,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+} from "firebase/auth";
+import { deleteDoc, getDoc, getDocs } from "firebase/firestore";
 
 jest.mock("@/src/db/repository", () => ({
   getProfile: jest.fn(),
@@ -10,14 +23,35 @@ jest.mock("@/src/db/repository", () => ({
   preparePristineLocalDataForCloudRestore: jest.fn(),
   unlinkCloudUser: jest.fn(),
 }));
-
-jest.mock("@/src/services/supabase", () => ({ requireSupabase: jest.fn() }));
-jest.mock("expo-linking", () => ({
-  createURL: jest.fn(() => "spendspeak://auth"),
+jest.mock("@/src/services/firebase/config", () => ({
+  requireFirebaseAuth: jest.fn(),
+  requireFirestoreDb: jest.fn(),
+  requireFirebaseFunctions: jest.fn(),
+  isFirebaseFunctionsEnabled: false,
 }));
-jest.mock("@/src/services/oauthBrowser", () => ({
-  openOAuthSession: jest.fn(),
+jest.mock("firebase/auth", () => ({
+  createUserWithEmailAndPassword: jest.fn(),
+  deleteUser: jest.fn(),
+  GoogleAuthProvider: { credential: jest.fn() },
+  sendEmailVerification: jest.fn(),
+  signInWithCredential: jest.fn(),
+  signInWithEmailAndPassword: jest.fn(),
+  signOut: jest.fn(),
 }));
+jest.mock("firebase/firestore", () => ({
+  collection: jest.fn(() => ({ path: "users/user-1/collection" })),
+  deleteDoc: jest.fn(),
+  doc: jest.fn(() => ({ path: "users/user-1" })),
+  getDoc: jest.fn(),
+  getDocs: jest.fn(),
+  limit: jest.fn((value: number) => ({ limit: value })),
+  query: jest.fn((reference: unknown) => reference),
+  writeBatch: jest.fn(() => ({
+    delete: jest.fn(),
+    commit: jest.fn(),
+  })),
+}));
+jest.mock("firebase/functions", () => ({ httpsCallable: jest.fn() }));
 
 const profile = {
   id: "local-owner-1",
@@ -31,68 +65,43 @@ const profile = {
   createdAt: "2026-08-30T00:00:00.000Z",
   updatedAt: "2026-08-30T00:00:00.000Z",
 };
+const user = { uid: "user-1", email: "user@example.com", emailVerified: true };
+const auth = { currentUser: user };
 
-const chain = { select: jest.fn(), eq: jest.fn(), maybeSingle: jest.fn() };
-chain.select.mockReturnValue(chain);
-chain.eq.mockReturnValue(chain);
-
-const session = { user: { id: "user-1", email: "user@example.com" } };
-const supabase = {
-  auth: {
-    signInWithPassword: jest.fn(),
-    signInWithOAuth: jest.fn(),
-    exchangeCodeForSession: jest.fn(),
-    setSession: jest.fn(),
-    signOut: jest.fn(),
-  },
-  from: jest.fn(() => chain),
-};
-
-describe("authentication and local-ledger ownership integration", () => {
+describe("Firebase authentication and local-ledger ownership", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    chain.select.mockReturnValue(chain);
-    chain.eq.mockReturnValue(chain);
-    chain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    jest.mocked(requireSupabase).mockReturnValue(supabase as never);
-    supabase.auth.signInWithPassword.mockResolvedValue({
-      data: { session },
-      error: null,
-    });
-    supabase.auth.signInWithOAuth.mockResolvedValue({
-      data: { url: "https://project.supabase.co/auth/v1/authorize" },
-      error: null,
-    });
-    supabase.auth.exchangeCodeForSession.mockResolvedValue({
-      data: { session },
-      error: null,
-    });
-    supabase.auth.setSession.mockResolvedValue({
-      data: { session },
-      error: null,
-    });
-    supabase.auth.signOut.mockResolvedValue({ error: null });
-    jest.mocked(OAuthBrowser.openOAuthSession).mockResolvedValue({
-      type: "success",
-      url: "spendspeak://auth?code=google-code",
-    });
+    jest.mocked(requireFirebaseAuth).mockReturnValue(auth as never);
+    jest.mocked(requireFirestoreDb).mockReturnValue({} as never);
+    jest
+      .mocked(signInWithEmailAndPassword)
+      .mockResolvedValue({ user } as never);
+    jest.mocked(signInWithCredential).mockResolvedValue({ user } as never);
+    jest
+      .mocked(GoogleAuthProvider.credential)
+      .mockReturnValue({ providerId: "google.com" } as never);
+    jest.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
+    jest.mocked(getDocs).mockResolvedValue({ empty: true, docs: [] } as never);
+    jest.mocked(deleteDoc).mockResolvedValue(undefined);
+    jest.mocked(deleteUser).mockResolvedValue(undefined);
     jest.mocked(repository.getProfile).mockResolvedValue(profile);
     jest
       .mocked(repository.preparePristineLocalDataForCloudRestore)
       .mockResolvedValue(false);
   });
 
-  it("links unsynced local data when the account has no cloud profile", async () => {
-    await signIn("user@example.com", "password");
+  it("links an unowned local ledger after email sign-in", async () => {
+    await signIn(" user@example.com ", "password");
+    expect(signInWithEmailAndPassword).toHaveBeenCalledWith(
+      auth,
+      "user@example.com",
+      "password",
+    );
     expect(repository.linkLocalDataToUser).toHaveBeenCalledWith("user-1");
-    expect(supabase.auth.signOut).not.toHaveBeenCalled();
   });
 
-  it("prepares an empty local shell for restore when cloud backup exists", async () => {
-    chain.maybeSingle.mockResolvedValueOnce({
-      data: { user_id: "user-1" },
-      error: null,
-    });
+  it("prepares a pristine device for restore when a cloud profile exists", async () => {
+    jest.mocked(getDoc).mockResolvedValueOnce({ exists: () => true } as never);
     jest
       .mocked(repository.preparePristineLocalDataForCloudRestore)
       .mockResolvedValueOnce(true);
@@ -103,54 +112,38 @@ describe("authentication and local-ledger ownership integration", () => {
     expect(repository.linkLocalDataToUser).not.toHaveBeenCalled();
   });
 
-  it("rejects a different account and immediately clears the newly created session", async () => {
+  it("rejects a different account and clears the Firebase session", async () => {
     jest
       .mocked(repository.getProfile)
       .mockResolvedValueOnce({ ...profile, userId: "another-user" });
     await expect(signIn("user@example.com", "password")).rejects.toThrow(
       "linked to a different account",
     );
-    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+    expect(firebaseSignOut).toHaveBeenCalledWith(auth);
     expect(repository.linkLocalDataToUser).not.toHaveBeenCalled();
   });
 
-  it("signs in with Google using PKCE and adopts the local ledger", async () => {
-    await expect(signInWithGoogle()).resolves.toBe(session);
-    expect(supabase.auth.signInWithOAuth).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo: "spendspeak://auth",
-        skipBrowserRedirect: true,
-        queryParams: { prompt: "select_account" },
-      },
-    });
-    expect(OAuthBrowser.openOAuthSession).toHaveBeenCalledWith(
-      "https://project.supabase.co/auth/v1/authorize",
-      "spendspeak://auth",
+  it("exchanges a Google ID token for Firebase credentials", async () => {
+    await signInWithGoogleIdToken("google-id-token");
+    expect(GoogleAuthProvider.credential).toHaveBeenCalledWith(
+      "google-id-token",
     );
-    expect(supabase.auth.exchangeCodeForSession).toHaveBeenCalledWith(
-      "google-code",
-    );
+    expect(signInWithCredential).toHaveBeenCalled();
     expect(repository.linkLocalDataToUser).toHaveBeenCalledWith("user-1");
   });
 
-  it("leaves the ledger untouched when Google sign-in is cancelled", async () => {
-    jest
-      .mocked(OAuthBrowser.openOAuthSession)
-      .mockResolvedValueOnce({ type: "cancel" } as never);
-    await expect(signInWithGoogle()).resolves.toBeNull();
-    expect(supabase.auth.exchangeCodeForSession).not.toHaveBeenCalled();
-    expect(repository.linkLocalDataToUser).not.toHaveBeenCalled();
+  it("rejects an empty Google identity token", async () => {
+    await expect(signInWithGoogleIdToken(" ")).rejects.toThrow(
+      "valid identity token",
+    );
+    expect(signInWithCredential).not.toHaveBeenCalled();
   });
 
-  it("rejects an OAuth callback sent to an unexpected application address", async () => {
-    jest.mocked(OAuthBrowser.openOAuthSession).mockResolvedValueOnce({
-      type: "success",
-      url: "malicious://auth?code=google-code",
-    });
-    await expect(signInWithGoogle()).rejects.toThrow(
-      "unexpected application address",
-    );
-    expect(supabase.auth.exchangeCodeForSession).not.toHaveBeenCalled();
+  it("deletes private cloud data and auth identity in free mode", async () => {
+    await deleteCloudAccount();
+    expect(getDocs).toHaveBeenCalledTimes(9);
+    expect(deleteDoc).toHaveBeenCalledWith({ path: "users/user-1" });
+    expect(deleteUser).toHaveBeenCalledWith(user);
+    expect(repository.unlinkCloudUser).toHaveBeenCalled();
   });
 });

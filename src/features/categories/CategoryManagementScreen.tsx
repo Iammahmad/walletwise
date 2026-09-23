@@ -31,7 +31,7 @@ export default function CategoryManagementScreen() {
   return (
     <Screen
       title="Transaction categories"
-      subtitle="Organize expenses and income. Expense categories receive a matching budget and can also belong to additional budgets."
+      subtitle="Organize expenses and income. A same-name budget matches expenses automatically; other budgets can be selected explicitly."
       action={
         <Button
           label="New"
@@ -154,7 +154,7 @@ function CategoryModal({
   const [transactionType, setTransactionType] =
     useState<TransactionType>("expense");
   const [icon, setIcon] = useState<CategoryIcon>("paw-outline");
-  const [color, setColor] = useState<CategoryColor>("#087F5B");
+  const [color, setColor] = useState<CategoryColor>("#9A6BFF");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 

@@ -3,24 +3,25 @@ import { useRouter } from "expo-router";
 import { useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Button } from "@/src/components/Button";
 import { Card } from "@/src/components/Card";
+import { DonutChart } from "@/src/components/DonutChart";
 import { FeedbackState } from "@/src/components/FeedbackState";
 import { Screen } from "@/src/components/Screen";
 import { TransactionRow } from "@/src/components/TransactionRow";
-import { VoiceButton } from "@/src/components/VoiceButton";
 import { getDashboardSummary, listTransactions } from "@/src/db/repository";
 import { monthBounds, monthStartFor } from "@/src/domain/dates";
 import { formatMoney } from "@/src/domain/money";
 import type { DashboardSummary, Transaction } from "@/src/domain/types";
-import { useReloadable } from "@/src/hooks/useReloadable";
-import { spacing } from "@/src/design/tokens";
+import { radius, spacing } from "@/src/design/tokens";
 import { useTheme } from "@/src/design/ThemeProvider";
+import { getSavingsTotal } from "@/src/features/savings/repository";
+import { useReloadable } from "@/src/hooks/useReloadable";
 import { useAppStore } from "@/src/state/appStore";
 
 interface HomeData {
   summary: DashboardSummary;
   recent: Transaction[];
+  savingsMinor: number;
 }
 const EMPTY: HomeData = {
   summary: {
@@ -30,6 +31,7 @@ const EMPTY: HomeData = {
     categoryTotals: [],
   },
   recent: [],
+  savingsMinor: 0,
 };
 
 export default function HomeScreen() {
@@ -41,30 +43,51 @@ export default function HomeScreen() {
     const reference = new Date();
     const bounds = monthBounds(reference, profile.timezone);
     const monthStart = monthStartFor(reference, profile.timezone);
-    const [summary, recent] = await Promise.all([
+    const [summary, recent, savingsMinor] = await Promise.all([
       getDashboardSummary(bounds.start, bounds.end, monthStart),
       listTransactions({ limit: 5 }),
+      getSavingsTotal(bounds.start, bounds.end),
     ]);
-    return { summary, recent };
+    return { summary, recent, savingsMinor };
   }, [profile.timezone]);
   const { data, loading, error, reload } = useReloadable(loader, EMPTY);
   const remaining =
     data.summary.budgetMinor == null
       ? null
       : data.summary.budgetMinor - data.summary.spendingMinor;
-  const largestCategory = Math.max(
-    ...data.summary.categoryTotals.map((item) => item.amountMinor),
-    1,
-  );
   const greeting =
     new Date().getHours() < 12
       ? "Good morning"
       : new Date().getHours() < 18
         ? "Good afternoon"
         : "Good evening";
-
+  const monthLabel = new Intl.DateTimeFormat(profile.locale, {
+    month: "long",
+    year: "numeric",
+    timeZone: profile.timezone,
+  }).format(new Date());
+  const totalChart = Math.max(
+    data.summary.categoryTotals.reduce(
+      (sum, item) => sum + item.amountMinor,
+      0,
+    ),
+    1,
+  );
   return (
-    <Screen title={greeting} subtitle="Here is your money at a glance.">
+    <Screen
+      title={greeting}
+      subtitle={`${monthLabel} money snapshot`}
+      action={
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open settings"
+          onPress={() => router.push("/settings")}
+          style={[styles.avatar, { backgroundColor: colors.primarySoft }]}
+        >
+          <Ionicons name="person-outline" size={20} color={colors.primary} />
+        </Pressable>
+      }
+    >
       {!online ? (
         <Card style={{ backgroundColor: colors.warningSoft }}>
           <Text style={{ color: colors.warning }}>
@@ -83,29 +106,52 @@ export default function HomeScreen() {
         />
       ) : (
         <>
-          <Card style={[styles.summary, { backgroundColor: colors.primary }]}>
-            <Text style={styles.summaryLabel}>Spent this month</Text>
+          <Card
+            style={[
+              styles.hero,
+              {
+                backgroundColor: colors.surfaceMuted,
+                borderColor: colors.primary,
+              },
+            ]}
+          >
+            <Text style={[styles.heroLabel, { color: colors.textMuted }]}>
+              Available after monthly spending
+            </Text>
             <Text
               adjustsFontSizeToFit
               numberOfLines={1}
-              style={styles.summaryAmount}
+              style={[styles.heroAmount, { color: colors.text }]}
             >
               {formatMoney(
-                data.summary.spendingMinor,
+                Math.max(
+                  0,
+                  data.summary.incomeMinor - data.summary.spendingMinor,
+                ),
                 profile.defaultCurrency,
                 profile.locale,
               )}
             </Text>
-            <View style={styles.summaryDetails}>
-              <SummaryDetail
+            <View style={styles.metrics}>
+              <Metric
+                label="Spent"
+                value={formatMoney(
+                  data.summary.spendingMinor,
+                  profile.defaultCurrency,
+                  profile.locale,
+                )}
+                color={colors.expense}
+              />
+              <Metric
                 label="Income"
                 value={formatMoney(
                   data.summary.incomeMinor,
                   profile.defaultCurrency,
                   profile.locale,
                 )}
+                color={colors.income}
               />
-              <SummaryDetail
+              <Metric
                 label="Budget left"
                 value={
                   remaining == null
@@ -116,76 +162,116 @@ export default function HomeScreen() {
                         profile.locale,
                       )
                 }
+                color={
+                  remaining != null && remaining < 0
+                    ? colors.expense
+                    : colors.primary
+                }
               />
             </View>
           </Card>
-
-          <View style={styles.quickActions}>
-            <View style={styles.voice}>
-              <VoiceButton onPress={() => router.push("/voice")} />
-            </View>
-            <Button
-              label="Manual expense"
-              icon="add"
-              variant="secondary"
+          <View style={styles.quickGrid}>
+            <QuickAction
+              icon="mic"
+              label="Speak expense"
+              onPress={() => router.push("/voice")}
+            />
+            <QuickAction
+              icon="card-outline"
+              label="Add manually"
               onPress={() => router.push("/(tabs)/add")}
             />
+            <QuickAction
+              icon="people-outline"
+              label="New split"
+              onPress={() => router.push("/split/new")}
+            />
           </View>
-
-          <SectionTitle title="Spending by category" />
-          <Card>
+          <SectionTitle
+            title="Spending by category"
+            action="Activity"
+            onPress={() => router.push("/(tabs)/transactions")}
+          />
+          <Card style={styles.chartCard}>
             {data.summary.categoryTotals.length ? (
-              data.summary.categoryTotals.slice(0, 5).map((item) => (
-                <View
-                  key={item.categoryId}
-                  accessible
-                  accessibilityLabel={`${item.name}, ${formatMoney(item.amountMinor, profile.defaultCurrency, profile.locale)}`}
-                  style={styles.categoryRow}
-                >
-                  <View style={styles.categoryHeading}>
-                    <Text style={[styles.categoryName, { color: colors.text }]}>
-                      {item.name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.categoryAmount,
-                        { color: colors.textMuted },
-                      ]}
-                    >
-                      {formatMoney(
-                        item.amountMinor,
-                        profile.defaultCurrency,
-                        profile.locale,
-                      )}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.track,
-                      { backgroundColor: colors.surfaceMuted },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.bar,
-                        {
-                          backgroundColor: item.color,
-                          width: `${Math.max(7, (item.amountMinor / largestCategory) * 100)}%`,
-                        },
-                      ]}
-                    />
-                  </View>
+              <>
+                <DonutChart
+                  segments={data.summary.categoryTotals
+                    .slice(0, 5)
+                    .map((item) => ({
+                      value: item.amountMinor,
+                      color: item.color,
+                    }))}
+                  centerLabel={formatMoney(
+                    data.summary.spendingMinor,
+                    profile.defaultCurrency,
+                    profile.locale,
+                  )}
+                />
+                <View style={styles.legend}>
+                  {data.summary.categoryTotals.slice(0, 5).map((item) => (
+                    <View key={item.categoryId} style={styles.legendRow}>
+                      <View
+                        style={[styles.dot, { backgroundColor: item.color }]}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.legendName, { color: colors.textMuted }]}
+                      >
+                        {item.name}
+                      </Text>
+                      <Text
+                        style={[styles.legendPercent, { color: colors.text }]}
+                      >
+                        {Math.round((item.amountMinor / totalChart) * 100)}%
+                      </Text>
+                    </View>
+                  ))}
                 </View>
-              ))
+              </>
             ) : (
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-                Add an expense to see your category breakdown.
-              </Text>
+              <FeedbackState
+                kind="empty"
+                message="Add an expense to see your spending chart."
+              />
             )}
           </Card>
-
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push("/savings")}
+            style={[
+              styles.savingsCard,
+              {
+                backgroundColor: colors.primarySoft,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View
+              style={[styles.savingsIcon, { backgroundColor: colors.primary }]}
+            >
+              <Ionicons
+                name="wallet-outline"
+                size={22}
+                color={colors.background}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.savingsLabel, { color: colors.textMuted }]}>
+                Savings logged this month
+              </Text>
+              <Text style={[styles.savingsValue, { color: colors.text }]}>
+                {formatMoney(
+                  data.savingsMinor,
+                  profile.defaultCurrency,
+                  profile.locale,
+                )}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" color={colors.primary} size={20} />
+          </Pressable>
           <SectionTitle
-            title="Recent transactions"
+            title="Recent activity"
             action="See all"
             onPress={() => router.push("/(tabs)/transactions")}
           />
@@ -206,9 +292,12 @@ export default function HomeScreen() {
                 />
               ))
             ) : (
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-                No transactions yet. Your first entry takes only a few seconds.
-              </Text>
+              <FeedbackState
+                kind="empty"
+                message="Your first entry takes only a few seconds."
+                actionLabel="Add expense"
+                onAction={() => router.push("/(tabs)/add")}
+              />
             )}
           </Card>
         </>
@@ -217,14 +306,52 @@ export default function HomeScreen() {
   );
 }
 
-function SummaryDetail({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
+  const { colors } = useTheme();
   return (
-    <View>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text numberOfLines={1} style={styles.detailValue}>
+    <View style={[styles.metric, { backgroundColor: colors.background }]}>
+      <Text style={[styles.metricLabel, { color: colors.textMuted }]}>
+        {label}
+      </Text>
+      <Text numberOfLines={1} style={[styles.metricValue, { color }]}>
         {value}
       </Text>
     </View>
+  );
+}
+function QuickAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  label: string;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={[
+        styles.quick,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <View style={[styles.quickIcon, { backgroundColor: colors.primarySoft }]}>
+        <Ionicons name={icon} size={20} color={colors.primary} />
+      </View>
+      <Text style={[styles.quickLabel, { color: colors.text }]}>{label}</Text>
+    </Pressable>
   );
 }
 function SectionTitle({
@@ -233,82 +360,93 @@ function SectionTitle({
   onPress,
 }: {
   title: string;
-  action?: string;
-  onPress?: () => void;
+  action: string;
+  onPress: () => void;
 }) {
   const { colors } = useTheme();
   return (
-    <View style={styles.sectionHeader}>
+    <View style={styles.section}>
       <Text
         accessibilityRole="header"
         style={[styles.sectionTitle, { color: colors.text }]}
       >
         {title}
       </Text>
-      {action ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onPress}
-          style={styles.sectionAction}
-        >
-          <Text style={{ color: colors.primary, fontWeight: "600" }}>
-            {action}
-          </Text>
-          <Ionicons name="chevron-forward" color={colors.primary} />
-        </Pressable>
-      ) : null}
+      <Pressable accessibilityRole="button" onPress={onPress}>
+        <Text style={{ color: colors.primary, fontWeight: "700" }}>
+          {action}
+        </Text>
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  summary: { borderWidth: 0, padding: spacing.lg },
-  summaryLabel: { color: "#DDF2E9", fontSize: 14, fontWeight: "600" },
-  summaryAmount: {
-    color: "#FFFFFF",
-    fontSize: 36,
-    lineHeight: 45,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hero: { padding: spacing.lg, borderWidth: 1 },
+  heroLabel: { fontSize: 12, fontWeight: "700" },
+  heroAmount: {
+    fontSize: 33,
+    lineHeight: 43,
+    fontWeight: "900",
     marginVertical: spacing.xs,
   },
-  summaryDetails: {
-    flexDirection: "row",
-    gap: spacing.xl,
-    marginTop: spacing.md,
-  },
-  detailLabel: { color: "#C7EBDD", fontSize: 12 },
-  detailValue: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-    marginTop: 3,
-    maxWidth: 150,
-    fontVariant: ["tabular-nums"],
-  },
-  quickActions: { alignItems: "center", gap: spacing.xs },
-  voice: { marginTop: -8 },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
+  metrics: { flexDirection: "row", gap: spacing.xs },
+  metric: { flex: 1, padding: spacing.sm, borderRadius: radius.md },
+  metricLabel: { fontSize: 9 },
+  metricValue: { fontSize: 11, fontWeight: "800", marginTop: 5 },
+  quickGrid: { flexDirection: "row", gap: spacing.xs },
+  quick: {
+    flex: 1,
+    minHeight: 92,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.md,
     justifyContent: "space-between",
+  },
+  quickIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickLabel: { fontSize: 11, lineHeight: 15, fontWeight: "800" },
+  section: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginTop: spacing.sm,
   },
-  sectionTitle: { fontSize: 18, fontWeight: "700" },
-  sectionAction: { minHeight: 44, flexDirection: "row", alignItems: "center" },
-  categoryRow: { gap: 6, paddingVertical: spacing.xs },
-  categoryHeading: {
+  sectionTitle: { fontSize: 18, fontWeight: "800" },
+  chartCard: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
+  legend: { flex: 1, gap: spacing.xs },
+  legendRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  legendName: { flex: 1, fontSize: 11 },
+  legendPercent: { fontSize: 11, fontWeight: "800" },
+  savingsCard: {
+    minHeight: 74,
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
     gap: spacing.sm,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderRadius: radius.lg,
   },
-  categoryName: { fontSize: 14, fontWeight: "600" },
-  categoryAmount: { fontSize: 13, fontVariant: ["tabular-nums"] },
-  track: { height: 7, borderRadius: 7, overflow: "hidden" },
-  bar: { height: 7, borderRadius: 7 },
-  emptyText: {
-    paddingVertical: spacing.lg,
-    textAlign: "center",
-    lineHeight: 21,
+  savingsIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  savingsLabel: { fontSize: 11 },
+  savingsValue: { fontSize: 17, fontWeight: "900", marginTop: 3 },
 });

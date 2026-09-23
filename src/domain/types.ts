@@ -62,8 +62,7 @@ export interface BudgetCategory {
   id: string;
   userId: string | null;
   localOwnerId: string;
-  /** Expense categories whose automatic transactions count toward this budget. */
-  categoryIds: string[];
+  sourceCategoryId: string | null;
   name: string;
   icon: string;
   color: string;
@@ -73,12 +72,12 @@ export interface BudgetCategory {
   syncStatus: SyncStatus;
   localUpdatedAt: string;
   lastSyncedAt: string | null;
-  categoryNames: string[];
+  sourceCategoryName?: string | null;
 }
 
 export interface BudgetCategoryInput {
   id?: string;
-  categoryIds: string[];
+  sourceCategoryId?: string | null;
   name: string;
   icon: string;
   color: string;
@@ -145,7 +144,7 @@ export interface TransactionInput {
   id?: string;
   accountId: string;
   categoryId: string;
-  /** Undefined uses every budget containing this category; null explicitly excludes all budgets. */
+  /** Undefined matches a same-name budget; null explicitly excludes category budgets. */
   budgetCategoryId?: string | null;
   type: TransactionType;
   amountMinor: number;
@@ -209,4 +208,138 @@ export interface DashboardSummary {
     color: string;
     amountMinor: number;
   }[];
+}
+
+export type SavingSource = "manual" | "voice";
+
+export interface SavingEntry {
+  id: string;
+  userId: string | null;
+  localOwnerId: string;
+  name: string;
+  amountMinor: number;
+  currency: string;
+  occurredAt: string;
+  note: string | null;
+  source: SavingSource;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncStatus: SyncStatus;
+  localUpdatedAt: string;
+  lastSyncedAt: string | null;
+}
+
+export interface SavingInput {
+  id?: string;
+  name: string;
+  amountMinor: number;
+  currency: string;
+  occurredAt: string;
+  note: string | null;
+  source: SavingSource;
+}
+
+export type SplitContactStatus = "local" | "invited" | "connected";
+
+export interface SplitContact {
+  id: string;
+  userId: string | null;
+  localOwnerId: string;
+  remoteUserId: string | null;
+  displayName: string;
+  email: string | null;
+  status: SplitContactStatus;
+  inviteToken: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncStatus: SyncStatus;
+  localUpdatedAt: string;
+  lastSyncedAt: string | null;
+}
+
+export type SplitType = "equal" | "loan";
+export type LoanDirection = "lent" | "borrowed";
+export type SplitStatus = "open" | "settled";
+
+export interface SplitParticipant {
+  id: string;
+  splitId: string;
+  contactId: string | null;
+  remoteUserId: string | null;
+  displayName: string;
+  isOwner: boolean;
+  shareMinor: number;
+  paidMinor: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SplitEntry {
+  id: string;
+  userId: string | null;
+  localOwnerId: string;
+  createdByUserId: string | null;
+  description: string;
+  splitType: SplitType;
+  loanDirection: LoanDirection | null;
+  totalMinor: number;
+  currency: string;
+  occurredAt: string;
+  status: SplitStatus;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncStatus: SyncStatus;
+  localUpdatedAt: string;
+  lastSyncedAt: string | null;
+  participants: SplitParticipant[];
+}
+
+export interface SplitParticipantInput {
+  contactId?: string | null;
+  remoteUserId?: string | null;
+  displayName: string;
+  isOwner: boolean;
+  shareMinor: number;
+  paidMinor: number;
+}
+
+export interface SplitInput {
+  id?: string;
+  description: string;
+  splitType: SplitType;
+  loanDirection?: LoanDirection | null;
+  totalMinor: number;
+  currency: string;
+  occurredAt: string;
+  note: string | null;
+  participants: SplitParticipantInput[];
+}
+
+export interface SplitSettlement {
+  id: string;
+  userId: string | null;
+  localOwnerId: string;
+  splitId: string | null;
+  contactId: string;
+  direction: "received" | "paid";
+  amountMinor: number;
+  currency: string;
+  occurredAt: string;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncStatus: SyncStatus;
+  localUpdatedAt: string;
+  lastSyncedAt: string | null;
+}
+
+export interface ContactBalance {
+  contact: SplitContact;
+  balanceMinor: number;
+  openSplitCount: number;
 }

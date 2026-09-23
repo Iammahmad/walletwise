@@ -52,7 +52,7 @@ function budgetRow(
 }
 
 describe("budget progress repository", () => {
-  it("calculates overall and category remaining amounts from current-month expenses", async () => {
+  it("counts same-name automatic expenses and explicit assignments without cross-budget matching", async () => {
     const db = {
       getAllAsync: jest.fn(async (sql: string) => {
         if (sql.includes("FROM budgets")) {
@@ -70,7 +70,7 @@ describe("budget progress repository", () => {
               user_id: null,
               local_owner_id: "owner-1",
               source_category_id: CATEGORY_FOOD_ID,
-              category_ids_json: JSON.stringify([CATEGORY_FOOD_ID]),
+              source_category_name: "Food",
               name: "Food",
               icon: "restaurant-outline",
               color: "#D97706",
@@ -86,7 +86,7 @@ describe("budget progress repository", () => {
               user_id: null,
               local_owner_id: "owner-1",
               source_category_id: null,
-              category_ids_json: JSON.stringify([CATEGORY_FOOD_ID]),
+              source_category_name: null,
               name: "Household",
               icon: "home-outline",
               color: "#087F5B",
@@ -99,21 +99,28 @@ describe("budget progress repository", () => {
             },
           ];
         }
-        if (sql.includes("SELECT id, name FROM categories")) {
-          return [{ id: CATEGORY_FOOD_ID, name: "Food" }];
-        }
         if (sql.includes("FROM transactions")) {
           return [
             {
               amount_minor: 30000,
               category_id: CATEGORY_FOOD_ID,
+              category_name: "Food",
               budget_category_id: null,
               budget_assignment_mode: "auto",
               currency: "PKR",
             },
             {
-              amount_minor: 15000,
+              amount_minor: 10000,
+              category_id: CATEGORY_FOOD_ID,
+              category_name: "Food",
+              budget_category_id: BUDGET_HOUSEHOLD_ID,
+              budget_assignment_mode: "explicit",
+              currency: "PKR",
+            },
+            {
+              amount_minor: 5000,
               category_id: CATEGORY_OTHER_ID,
+              category_name: "Other",
               budget_category_id: null,
               budget_assignment_mode: "none",
               currency: "PKR",
@@ -147,8 +154,8 @@ describe("budget progress repository", () => {
         budget: expect.objectContaining({ id: "food" }),
       }),
       expect.objectContaining({
-        spentMinor: 30000,
-        remainingMinor: 30000,
+        spentMinor: 10000,
+        remainingMinor: 50000,
         budget: expect.objectContaining({ id: "household" }),
       }),
     ]);

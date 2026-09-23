@@ -32,7 +32,7 @@ export function TransactionRow({
   const metadata = [
     transaction.categoryName,
     transaction.budgetCategoryName
-      ? `Budgets: ${transaction.budgetCategoryName}`
+      ? `Budget: ${transaction.budgetCategoryName}`
       : null,
     formatDate(transaction.occurredAt, locale, timezone, {
       month: "short",

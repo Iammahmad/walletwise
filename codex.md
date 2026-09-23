@@ -805,28 +805,25 @@ SpendSpeak **v1.1.0 (Android version code 3)** was built successfully on **2026-
 
 The build used the existing remote Android keystore and the EAS preview environment's public Supabase URL/publishable key. It contains no service-role or Gemini secret. Code verification before submission passed strict TypeScript, ESLint, all **15 test suites**, all **83 tests**, Expo SDK 57 dependency validation, resolved Expo native config, and a clean Android Hermes production export. Physical-device and hosted Supabase migration/sync verification remain required.
 
-## 22. Many-to-many automatic budget membership (v1.2.0 source)
+## 22. Predictable same-name budget assignment (v1.2.0 source)
 
-Implemented on **2026-09-18**. The current source version is **v1.2.0** with Android `versionCode` **4**. The latest retained APK remains v1.1.0; no EAS build has yet been requested or produced from this v1.2.0 source.
+Implemented initially on **2026-09-18** and corrected to the final same-name-only automatic rule on **2026-09-22**. The current source version is **v1.2.0** with Android `versionCode` **4**. The latest retained APK remains v1.1.0; no EAS build has yet been requested or produced from this v1.2.0 source.
 
 ### Product behavior completed
 
-- A budget category can include zero, one, or many expense transaction categories. The editor at **Settings → Budget categories** exposes accessible multi-select checkboxes and displays the included category names in the list.
-- One transaction category can belong to several budget categories. For example, `Food` can remain in the matching `Food` budget and also be included in `Household`; one automatic Food expense then contributes to both budget totals without duplicating the transaction.
-- Existing same-name category/budget relationships are migrated into the initial membership list, so the previous Food-to-Food behavior continues.
-- Transaction budget behavior is now explicit and lossless:
-  - **Automatic** counts the expense in every active budget category containing its transaction category.
-  - Selecting a named budget is an **explicit override** and counts only in that budget.
-  - **No budget** excludes the expense from category-budget totals.
-  - The overall monthly budget continues to include every expense, including expenses excluded from category budgets.
-- Budget drill-down uses the same membership rules as progress calculations, so each card shows the exact transactions responsible for its total.
-- Transaction rows and CSV export can represent multiple automatic budget names.
+- Transaction categories and budget categories remain separately editable.
+- **Automatic** uses one simple rule: an expense counts toward an active budget category whose name matches the transaction category case-insensitively. `Spent 600 on Food` therefore counts toward Food only when a Food budget exists; otherwise it remains a regular transaction.
+- A separate budget such as Household can receive any expense through an explicit manual selection or a spoken phrase such as `Spent 600 on Food in Household budget`. The explicit choice counts only in Household.
+- **No budget** excludes the expense from category-budget totals.
+- The overall monthly budget continues to include every expense, including expenses excluded from category budgets.
+- Budget drill-down uses the same automatic/explicit rules as progress calculations, so each card shows the exact transactions responsible for its total.
+- The budget editor explains the same-name rule and no longer presents transaction-category membership checkboxes.
 
 ### Schema and synchronization
 
-- SQLite schema version **3** adds `budget_categories.category_ids_json` and `transactions.budget_assignment_mode`. The migration converts old source mappings to membership arrays and distinguishes prior automatic, explicit, and excluded assignments where possible.
-- Added `supabase/migrations/202609180002_budget_category_memberships.sql` with the equivalent `uuid[]` membership field, assignment constraints, GIN/query indexes, same-user active-expense validation, and migration of existing data.
-- Sync serializes the local JSON membership list to a validated Supabase UUID array and converts pulled arrays back to local JSON. Membership edits reuse the budget category's existing durable outbox record.
+- SQLite schema version **3** adds `transactions.budget_assignment_mode` and distinguishes automatic, explicit, and excluded assignments. Automatic rows keep no stored budget ID because their match is derived from the current transaction-category and budget-category names.
+- Added `supabase/migrations/202609180002_budget_assignment_modes.sql` with the equivalent assignment field, consistency constraints, migration of existing assignments, and a supporting query index.
+- Budget categories continue to sync as independent records. Transactions sync their assignment mode and only store `budget_category_id` for explicit assignments.
 - The new migration must be deployed with `npm run supabase:push` before a signed-in v1.2 client synchronizes. The configured local Supabase hostname still does not resolve, so hosted verification remains pending.
 
 ### Verification performed
@@ -834,12 +831,162 @@ Implemented on **2026-09-18**. The current source version is **v1.2.0** with And
 - Updated Expo SDK 57 packages to the versions prescribed by `expo install --fix`: Expo `57.0.24`, Expo Constants `57.0.19`, Expo Router `57.0.22`, and Expo Sharing `57.0.21`.
 - `npx expo install --check`: dependencies are up to date.
 - `npm run check`: strict TypeScript, ESLint, **15 of 15 suites**, and **84 of 84 tests** passed after the dependency update.
-- Tests cover one Food category contributing automatically to both Food and Household, explicit override, No budget, membership persistence, cloud payload conversion, and category-budget progress.
+- Tests cover Food contributing automatically only to Food, no automatic Household contribution, explicit Household override, No budget, cloud payloads, drill-down filtering, and category-budget progress.
 - Final Android Hermes production export succeeded: **1,605 modules** and a 4.9 MB `.hbc` bundle. The temporary export directory was verified inside the workspace and removed afterward.
 - `npm audit` reports three moderate advisories in Expo Router's transitive `query-string` / `decode-uri-component` chain. npm proposes an incompatible Expo Router major downgrade, so no forced dependency change was applied; there are no high or critical advisories.
 
 ### Device/cloud verification still required
 
-- On Android, create a `Household` budget category containing `Food` and `Groceries`, leave the matching Food budget containing Food, and verify an Automatic Food expense appears in both cards and both drill-downs.
-- Verify that explicitly choosing Household counts only there and choosing No budget counts in neither category budget.
-- Apply all Supabase migrations in timestamp order and verify membership edits and automatic transactions synchronize across two authenticated devices under RLS.
+- On Android, create Food and Household budgets. Verify an Automatic Food expense appears only in Food, and remains a regular transaction when no Food budget exists for that month.
+- Verify that explicitly choosing or speaking Household counts only there and choosing No budget counts in neither category budget.
+- Apply all Supabase migrations in timestamp order and verify automatic/explicit assignments synchronize across two authenticated devices under RLS.
+
+## 23. WalletWise HTML design-review prototype
+
+Created on **2026-09-22** as an isolated design artifact under `design-review/`. It does not change the current Expo application or its local database.
+
+### Brand directions
+
+- Rebrands the product presentation to **WalletWise** with the tagline **“One app. Every budget under control.”**
+- Uses the approved two-layer open-wallet icon assets in both Emerald and Purple.
+- Provides synchronized Emerald and Purple versions of every screen, plus a side-by-side comparison mode.
+- Includes a local browser preference control for recording the selected color direction.
+
+### Screen coverage
+
+- Contains **28 interactive screen families** covering splash, onboarding, preferences, privacy, Home, Transactions, filters, add/edit entry, all voice states, Budgets, budget detail/editing, Splits, equal splits, loans, friend balances, settlements, Settings, Google/cloud backup, and both category systems.
+- Uses the decided primary navigation: Home, Activity, central Add, Budgets, and Splits, with Settings accessed from the profile affordance.
+- Includes current/older-month navigation in Transactions and Budgets.
+- Preserves the one-transaction-to-one-budget maximum and shows automatic same-name matching alongside explicit custom groups such as Household.
+- Treats Splits as a standalone ledger. Equal splits, loans, balances, and settlements explicitly do not modify transactions, accounts, spending totals, or budgets.
+- Expands the category editor to **70 icon choices** across Food & drink, Shopping & home, Travel & transport, Life & wellbeing, and Money & services.
+
+### Review and verification
+
+- Open `design-review/index.html` directly in a modern browser; review instructions are in `design-review/README.md`.
+- `node --check design-review/app.js` passes.
+- Static checks confirm all 28 screen definitions, both approved icon assets, and no remaining SpendSpeak or legacy tagline text in the review artifact.
+- Automated browser screenshot inspection was unavailable because no connected browser session was exposed in the workspace. A final visual review should therefore be performed in the user's browser before choosing the implementation direction.
+
+## 24. WalletWise v2 Purple implementation and Firebase migration
+
+Executed on **2026-09-22** after Purple was selected from the HTML design review. The current source is **WalletWise v2.0.0**, Android `versionCode` **5**. The existing Android package ID, Expo project slug/ID, and SQLite filename remain unchanged so installed SpendSpeak builds can migrate in place without losing device data. A signed v2 preview APK was subsequently produced; see Section 26.
+
+### Rebrand and interface
+
+- Changed the visible product name, error/loading copy, permissions, export title, notification copy, icon, splash, and favicon to WalletWise.
+- Applied the approved two-layer Purple wallet icon at `assets/walletwise-icon-purple-v1.png`.
+- Implemented Purple light and dark design tokens while preserving the System/Light/Dark setting.
+- Reworked primary navigation to **Home, Activity, Add, Budgets, Splits** with Settings opened from the Home profile action.
+- Added dashboard donut charts, quick voice/manual/split actions, savings summary, and the Purple financial overview cards from the approved direction.
+- Expanded category selection to roughly 70 Ionicons.
+
+### Independent savings ledger
+
+- SQLite schema version **4** adds `savings` with device UUIDs, precise minor units, timestamps, soft deletion, and synchronization metadata.
+- Savings creation is available from Add and the dedicated Savings dashboard, with monthly navigation, a donut chart, history, and immediate form clearing.
+- Savings are deliberately absent from transactions, accounts, income/spending summaries, and every budget query. This separation is encoded in different tables/repositories and covered by tests.
+
+### Standalone Splits ledger
+
+- Added independent SQLite tables for split contacts, splits, participants, and settlements. These tables do not reference the personal transaction/budget ledger.
+- Added equal splits with deterministic minor-unit remainder allocation, one payer, up to 50 participants, loans in either direction, friend balances, settlement recording, split details, friend drill-down, and recent activity.
+- Local contacts work without an account. Connected contacts use server-issued invitations and shared Firebase records.
+- WhatsApp invitation sharing uses a short-lived callable-generated token. Firebase Hosting serves an HTTPS landing page with a `walletwise://invite/{token}` fallback; the system share sheet is used when WhatsApp is unavailable.
+- New shared splits notify connected participants. Push tokens are registered through an authenticated callable and notifications are sent from trusted Cloud Functions through Expo Push Service.
+- Shared split creation/update is server validated; every remote participant must be connected and only the original creator may edit an existing shared split.
+
+### Firebase replaces Supabase
+
+- Removed the Supabase client, migrations, Edge Functions, CLI dependency/scripts, session-refresh lifecycle, PKCE callback helpers, and Supabase-specific tests.
+- Added lazy Firebase JS SDK configuration for Authentication, Firestore, and callable Functions. Missing public configuration produces a visible local-only state.
+- Added persistent React Native Firebase Auth sessions through AsyncStorage, email verification, native Google ID-token authentication, local-ledger ownership protection, and cloud restore/adoption behavior.
+- Google sign-in uses `@react-native-google-signin/google-signin`, following current Expo guidance for provider-native authentication. It requires a fresh development build plus the Web client ID, Android package/SHA registration, and iOS client ID/reversed scheme where applicable.
+- Added Firestore Rules that isolate every private `users/{uid}` tree, allow participant-only reads of shared splits/connections, and deny all direct shared writes.
+- Reimplemented outbox push/pull against Firestore. Private data lives under the authenticated user; shared splits use participant queries and a protected callable. UUID retries remain idempotent and the latest valid `updated_at` wins.
+- Reimplemented protected Gemini parsing as an authenticated, size-limited, per-user-rate-limited callable with structured JSON, a non-invention prompt, and server/client Zod validation. The Gemini key remains a Function secret.
+- Cloud account deletion removes the private user tree, connections, invitations, created shared splits, and Firebase Auth identity; participation retained in another creator's split is anonymized.
+
+### Configuration and deployment artifacts
+
+- Added `firebase.json`, `firestore.rules`, `firestore.indexes.json`, `.firebaserc.example`, the Node.js 22 `functions/` project, and `firebase-hosting/public/invite.html`.
+- Replaced `.env.example` and README setup instructions with Firebase public configuration, OAuth client IDs, Functions secrets, Firestore deployment, Hosting/invites, EAS builds, FCM credentials, and privacy guidance.
+- Firebase Dynamic Links is intentionally not used because the service has shut down; invitations use Firebase Hosting and the WalletWise custom scheme.
+- The old `com.spendspeak.app` package ID and `spendspeak` EAS slug are intentional compatibility identifiers, not visible branding.
+
+### Verification completed in this execution
+
+- Final `npm run check`: strict TypeScript, ESLint, **14 of 14 suites**, and **81 of 81 tests** passed, including new split/savings contracts and rewritten Firebase auth/sync integration tests.
+- Final Firebase Functions TypeScript build passed after adding structured Gemini JSON schema enforcement, notification batching/deduplication, shared-split authorization, and account-deletion anonymization.
+- `npx expo install --check`: every dependency matches Expo SDK 57.
+- `npx expo-doctor`: **21 of 21 checks passed** after consolidating native configuration in `app.config.ts`.
+- `npx expo config --type public --json`: resolved successfully with WalletWise v2 branding, Purple native assets, native speech and notification plugins, the `walletwise` scheme, and preserved Android/iOS compatibility identifiers.
+- Android Hermes production export passed: **1,784 modules**, a 6.4 MB `.hbc` bundle, and 46 assets. The temporary export directory was removed after verification.
+- `npm audit --omit=dev` reports three moderate transitive advisories in Expo Router's `query-string`/`decode-uri-component` chain and no high or critical advisories. npm's automatic fix would force an incompatible Expo Router downgrade, so it was not applied.
+
+### External configuration and device verification still required
+
+- The current private `.env` still contains the older Supabase variable names. They are ignored by v2 and were not overwritten. Copy the Firebase, Google OAuth, and invite-host values documented in `.env.example` before producing a connected v2 build.
+- In Firebase Console, enable Email/Password and Google Authentication, register the Android package plus SHA-1/SHA-256 fingerprints, create the Web/iOS OAuth clients as needed, and provide Android FCM credentials for push delivery.
+- Authenticate the Firebase CLI, select the real project, set the Gemini Function secret, then deploy Firestore rules/indexes, Functions, and Hosting using the commands in README.
+- Produce a fresh Expo development/preview build. Native Google Sign-In, speech recognition, and push notification changes cannot be added to an already installed binary by Metro refresh.
+- Verify email verification, Google sign-in, upgrade migration from the retained v1.1 APK, two-account split invitation/notification/edit/delete flows, account deletion/anonymization, background-to-foreground sync, and Savings isolation on physical Android devices.
+- The Firebase project connection, Android OAuth registration, and WalletWise v2 preview APK are now complete. Physical-device regression testing remains required.
+
+## 25. Live Firebase project connection
+
+Connected WalletWise to Firebase project **`budgetwise-f90a8`** on **2026-09-22**.
+
+### Completed live configuration
+
+- Authenticated Firebase CLI access and bound the repository through `.firebaserc`.
+- Registered the `WalletWise` Web app and `WalletWise-Android` app. The Android registration keeps package `com.spendspeak.app` for installed-app compatibility.
+- Stored the public Expo Firebase configuration in ignored `.env.local`, configured the live invitation origin, and added the Android `google-services.json` to Expo native configuration.
+- Created the default Firestore Standard database in `asia-south1` (Mumbai) with deletion protection and realtime updates enabled.
+- Successfully compiled and deployed the ownership-focused Firestore rules and required shared-split composite index.
+- Enabled Email/Password and Google Authentication through the versioned `firebase.json` configuration.
+- Registered the existing EAS preview keystore SHA-1 and SHA-256 fingerprints without changing or downloading the keystore. Firebase generated the matching Android OAuth client, and the generated Web OAuth client is configured in ignored local environment state.
+- Deployed Firebase Hosting. `https://budgetwise-f90a8.web.app/invite/test-connection` returns HTTP 200, contains WalletWise branding, and emits the `walletwise://invite/` custom-scheme fallback.
+- Aligned callable Functions and the mobile Functions client to `asia-south1`.
+- Corrected reusable Firebase scripts for Authentication, Functions, and Gemini secret deployment.
+
+### Verification
+
+- Final `npm run check`: strict TypeScript, ESLint, **14 of 14 suites**, and **81 of 81 tests** passed.
+- Firebase Functions TypeScript build passed.
+- Expo public config resolves `google-services.json` and the WalletWise SDK 57 native configuration.
+- Authentication, Firestore rules/indexes, and Hosting deployments completed successfully.
+
+### Remaining external requirements
+
+- Protected Cloud Functions could not be deployed because `budgetwise-f90a8` is still on the Spark plan. Firebase requires an explicit Blaze upgrade before Cloud Build and Artifact Registry can be enabled. No billing change was attempted automatically.
+- The owner chose to remain on Spark. `EXPO_PUBLIC_FIREBASE_FUNCTIONS_ENABLED=false` now makes this an intentional application mode: connected invitations/shared uploads, server push registration, and optional Gemini parsing are visibly disabled instead of failing at runtime.
+- Fixed private synchronization so Functions being disabled no longer blocks expenses, income, categories, accounts, budgets, savings, local contacts, or settlements from backing up to the authenticated user's Firestore tree. Shared split writes remain safely queued for a possible future upgrade.
+- Added a Spark-compatible account deletion path that removes the authenticated user's known private collections, profile document, and Firebase Auth identity. The deployed Firestore rules permit delete only inside the caller's own `users/{uid}` tree; shared server records cannot exist while connected sharing is disabled.
+- Added test coverage for free-mode private sync and account deletion. Final verification is **14 of 14 suites** and **83 of 83 tests**, with strict TypeScript, ESLint, and the Functions TypeScript build passing.
+- If the owner later upgrades the project, set `GEMINI_API_KEY` through Firebase Secret Manager, deploy Functions, set the Functions-enabled flag to `true`, and rebuild the app.
+- Configure an FCM v1 service-account credential in EAS before testing push delivery on an Android development/preview build.
+- Install the WalletWise v2.0.0 preview build from Section 26 and run physical-device tests for Google Sign-In, email verification, sync isolation, invitation acceptance, notifications, and account deletion.
+
+## 26. WalletWise v2.0.0 Android preview release
+
+Completed successfully on **2026-09-23**.
+
+- EAS build ID: `63bba12d-c6a6-4cc9-9178-7b385b9ff618`
+- Version: `2.0.0`
+- Android version code: `5`
+- Package: `com.spendspeak.app` (retained for upgrade/data compatibility)
+- Expo SDK: `57.0.0`
+- Profile/distribution: `preview` / `internal`
+- Artifact type: signed, directly installable APK
+- Build page: <https://expo.dev/accounts/iamm.ahmed/projects/spendspeak/builds/63bba12d-c6a6-4cc9-9178-7b385b9ff618>
+- Direct APK: <https://expo.dev/artifacts/eas/aEga2DcFlev0-7gX-wjXnhwfvwWp4V6ZH1XSDy_Siis.apk>
+- Retained local artifact: `releases/WalletWise-v2.0.0-build5.apk`
+- Size: `120885340` bytes / 115.29 MiB
+- SHA-256: `42D202BA3481EABFC7DBDE1D8B38630C7EE667375F015FB3E72A3F3143822ACC`
+
+Release verification before submission passed strict TypeScript, ESLint, **14 of 14 test suites**, **83 of 83 tests**, the Firebase Functions TypeScript build, Expo SDK 57 dependency validation, native Expo configuration resolution, and the Android Hermes production export. EAS completed native compilation and signing with the existing remote Android keystore.
+
+This build intentionally uses Firebase Spark mode. Local finance, budgets, savings, local splits, Firebase Authentication, and private Firestore backup remain available. Callable-Function features (connected split invitations/shared split uploads, push-token registration, and Gemini parsing) remain visibly disabled until a future Blaze upgrade and Function deployment. Physical Android verification is still required for upgrade data preservation, speech recognition, Google Sign-In, private sync, and the complete WalletWise v2 interface.
+
+The obsolete `EXPO_PUBLIC_SUPABASE_URL` entry was removed from the remote EAS preview environment after the build. The obsolete sensitive `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` entry remains because remote-secret deletion requires separate explicit authorization; WalletWise v2 does not read or use it.

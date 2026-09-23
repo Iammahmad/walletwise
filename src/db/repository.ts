@@ -22,7 +22,7 @@ import {
 } from "@/src/domain/schemas";
 import { selectMonthlyBudgets } from "@/src/domain/budgets";
 
-type Row = Record<string, string | number | boolean | readonly string[] | null>;
+type Row = Record<string, string | number | boolean | null>;
 
 const CLOUD_COLUMNS: Record<
   Exclude<OutboxItem["entityType"], "profiles">,
@@ -56,7 +56,6 @@ const CLOUD_COLUMNS: Record<
     "id",
     "user_id",
     "source_category_id",
-    "category_ids_json",
     "name",
     "icon",
     "color",
@@ -95,6 +94,61 @@ const CLOUD_COLUMNS: Record<
     "updated_at",
     "deleted_at",
   ],
+  savings: [
+    "id",
+    "user_id",
+    "name",
+    "amount_minor",
+    "currency",
+    "occurred_at",
+    "note",
+    "source",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+  ],
+  split_contacts: [
+    "id",
+    "user_id",
+    "remote_user_id",
+    "display_name",
+    "email",
+    "status",
+    "invite_token",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+  ],
+  splits: [
+    "id",
+    "user_id",
+    "created_by_user_id",
+    "description",
+    "split_type",
+    "loan_direction",
+    "total_minor",
+    "currency",
+    "occurred_at",
+    "status",
+    "note",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+  ],
+  split_settlements: [
+    "id",
+    "user_id",
+    "split_id",
+    "contact_id",
+    "direction",
+    "amount_minor",
+    "currency",
+    "occurred_at",
+    "note",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+  ],
 };
 
 function asString(row: Row, key: string): string {
@@ -104,29 +158,6 @@ function asString(row: Row, key: string): string {
 function nullableString(row: Row, key: string): string | null {
   const value = row[key];
   return value == null ? null : String(value);
-}
-
-function parseCategoryIds(value: Row[string] | undefined): string[] {
-  let candidate: unknown = value;
-  if (typeof value === "string") {
-    try {
-      candidate = JSON.parse(value);
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(candidate)) return [];
-  return [
-    ...new Set(
-      candidate.filter(
-        (item): item is string =>
-          typeof item === "string" &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-            item,
-          ),
-      ),
-    ),
-  ];
 }
 
 function mapProfile(row: Row): LocalProfile {
@@ -185,16 +216,12 @@ function mapCategory(row: Row): Category {
   };
 }
 
-function mapBudgetCategory(
-  row: Row,
-  categoryNames = new Map<string, string>(),
-): BudgetCategory {
-  const categoryIds = parseCategoryIds(row.category_ids_json);
+function mapBudgetCategory(row: Row): BudgetCategory {
   return {
     id: asString(row, "id"),
     userId: nullableString(row, "user_id"),
     localOwnerId: asString(row, "local_owner_id"),
-    categoryIds,
+    sourceCategoryId: nullableString(row, "source_category_id"),
     name: asString(row, "name"),
     icon: asString(row, "icon"),
     color: asString(row, "color"),
@@ -204,10 +231,7 @@ function mapBudgetCategory(
     syncStatus: asString(row, "sync_status") as BudgetCategory["syncStatus"],
     localUpdatedAt: asString(row, "local_updated_at"),
     lastSyncedAt: nullableString(row, "last_synced_at"),
-    categoryNames: categoryIds.flatMap((id) => {
-      const name = categoryNames.get(id);
-      return name ? [name] : [];
-    }),
+    sourceCategoryName: nullableString(row, "source_category_name"),
   };
 }
 
@@ -296,8 +320,10 @@ function applyAutomaticBudgetNames(
       };
     }
     if (transaction.budgetAssignmentMode === "explicit") return transaction;
-    const matches = budgetCategories.filter((budgetCategory) =>
-      budgetCategory.categoryIds.includes(transaction.categoryId),
+    const matches = budgetCategories.filter(
+      (budgetCategory) =>
+        transaction.categoryName?.trim().toLocaleLowerCase() ===
+        budgetCategory.name.trim().toLocaleLowerCase(),
     );
     return {
       ...transaction,
@@ -427,29 +453,31 @@ export async function listCategories(
 export async function listBudgetCategories(): Promise<BudgetCategory[]> {
   const db = await getDatabase();
   const profile = await activeProfile(db);
-  const [rows, categoryRows] = await Promise.all([
-    db.getAllAsync<Row>(
-      `SELECT * FROM budget_categories
-       WHERE local_owner_id = ? AND deleted_at IS NULL
-       ORDER BY name COLLATE NOCASE`,
-      profile.id,
-    ),
-    db.getAllAsync<Row>(
-      `SELECT id, name FROM categories
-       WHERE local_owner_id = ? AND transaction_type = 'expense' AND deleted_at IS NULL`,
-      profile.id,
-    ),
-  ]);
-  const names = new Map(
-    categoryRows.map((row) => [asString(row, "id"), asString(row, "name")]),
+  const rows = await db.getAllAsync<Row>(
+    `SELECT bc.*, c.name AS source_category_name
+     FROM budget_categories bc
+     LEFT JOIN categories c ON c.id = bc.source_category_id
+     WHERE bc.local_owner_id = ? AND bc.deleted_at IS NULL
+     ORDER BY bc.name COLLATE NOCASE`,
+    profile.id,
   );
-  return rows.map((row) => mapBudgetCategory(row, names));
+  return rows.map(mapBudgetCategory);
 }
 
 export async function getBudgetCategory(
   id: string,
 ): Promise<BudgetCategory | null> {
-  return (await listBudgetCategories()).find((item) => item.id === id) ?? null;
+  const db = await getDatabase();
+  const profile = await activeProfile(db);
+  const row = await db.getFirstAsync<Row>(
+    `SELECT bc.*, c.name AS source_category_name
+     FROM budget_categories bc
+     LEFT JOIN categories c ON c.id = bc.source_category_id
+     WHERE bc.id = ? AND bc.local_owner_id = ?`,
+    id,
+    profile.id,
+  );
+  return row ? mapBudgetCategory(row) : null;
 }
 
 export async function saveBudgetCategory(
@@ -479,35 +507,21 @@ export async function saveBudgetCategory(
   if (parsed.id && !existing)
     throw new Error("The budget category no longer exists.");
 
-  const categoryIds = [...new Set(parsed.categoryIds)];
-  if (categoryIds.length) {
-    const placeholders = categoryIds.map(() => "?").join(", ");
-    const validCategories = await db.getAllAsync<{ id: string }>(
-      `SELECT id FROM categories
-       WHERE local_owner_id = ? AND transaction_type = 'expense' AND deleted_at IS NULL
-         AND id IN (${placeholders})`,
-      profile.id,
-      ...categoryIds,
-    );
-    if (validCategories.length !== categoryIds.length) {
-      throw new Error("Choose valid expense categories for this budget.");
-    }
-  }
-
   const id = parsed.id ?? Crypto.randomUUID();
   const now = new Date().toISOString();
   const createdAt = existing ? asString(existing, "created_at") : now;
-  const sourceCategoryId = nullableString(existing ?? {}, "source_category_id");
-  const categoryIdsJson = JSON.stringify(categoryIds);
+  const sourceCategoryId =
+    parsed.sourceCategoryId === undefined
+      ? nullableString(existing ?? {}, "source_category_id")
+      : parsed.sourceCategoryId;
   const syncStatus = profile.userId ? "pending" : "local";
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       `INSERT INTO budget_categories
-       (id, user_id, local_owner_id, source_category_id, category_ids_json, name, icon, color, created_at, updated_at,
+       (id, user_id, local_owner_id, source_category_id, name, icon, color, created_at, updated_at,
         deleted_at, sync_status, local_updated_at, last_synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
        ON CONFLICT(id) DO UPDATE SET source_category_id = excluded.source_category_id,
-        category_ids_json = excluded.category_ids_json,
         name = excluded.name, icon = excluded.icon, color = excluded.color,
         updated_at = excluded.updated_at, deleted_at = NULL,
         sync_status = excluded.sync_status, local_updated_at = excluded.local_updated_at`,
@@ -515,7 +529,6 @@ export async function saveBudgetCategory(
       profile.userId,
       profile.id,
       sourceCategoryId,
-      categoryIdsJson,
       parsed.name,
       parsed.icon,
       parsed.color.toUpperCase(),
@@ -594,14 +607,13 @@ export async function createCategory(input: CategoryInput): Promise<Category> {
     if (parsed.transactionType === "expense") {
       await db.runAsync(
         `INSERT INTO budget_categories
-         (id, user_id, local_owner_id, source_category_id, category_ids_json, name, icon, color, created_at, updated_at,
+         (id, user_id, local_owner_id, source_category_id, name, icon, color, created_at, updated_at,
           deleted_at, sync_status, local_updated_at, last_synced_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
         id,
         profile.userId,
         profile.id,
         id,
-        JSON.stringify([id]),
         parsed.name,
         parsed.icon,
         parsed.color.toUpperCase(),
@@ -736,13 +748,11 @@ export async function listTransactions(
   if (filters.budgetCategoryId) {
     const budgetCategory = await getBudgetCategory(filters.budgetCategoryId);
     if (!budgetCategory) return [];
-    const automaticClause = budgetCategory.categoryIds.length
-      ? ` OR (t.budget_assignment_mode = 'auto' AND t.category_id IN (${budgetCategory.categoryIds.map(() => "?").join(", ")}))`
-      : "";
     conditions.push(
-      `((t.budget_assignment_mode = 'explicit' AND t.budget_category_id = ?)${automaticClause})`,
+      `((t.budget_assignment_mode = 'explicit' AND t.budget_category_id = ?)
+        OR (t.budget_assignment_mode = 'auto' AND lower(c.name) = lower(?)))`,
     );
-    params.push(filters.budgetCategoryId, ...budgetCategory.categoryIds);
+    params.push(filters.budgetCategoryId, budgetCategory.name);
   }
   if (filters.dateFrom) {
     conditions.push("t.occurred_at >= ?");
@@ -886,26 +896,26 @@ export async function getBudgetProgress(
     db.getAllAsync<{
       amount_minor: number;
       category_id: string;
+      category_name: string;
       budget_category_id: string | null;
       budget_assignment_mode: Transaction["budgetAssignmentMode"];
       currency: string;
     }>(
-      `SELECT amount_minor, category_id, budget_category_id, budget_assignment_mode, currency
-       FROM transactions
-       WHERE local_owner_id = ? AND type = 'expense' AND deleted_at IS NULL
-         AND occurred_at >= ? AND occurred_at < ?`,
+      `SELECT t.amount_minor, t.category_id, c.name AS category_name,
+              t.budget_category_id, t.budget_assignment_mode, t.currency
+       FROM transactions t
+       JOIN categories c ON c.id = t.category_id
+       WHERE t.local_owner_id = ? AND t.type = 'expense' AND t.deleted_at IS NULL
+         AND t.occurred_at >= ? AND t.occurred_at < ?`,
       profile.id,
       start,
       end,
     ),
   ]);
-  const categoriesById = new Map(
-    budgetCategories.map((category) => [category.id, category]),
-  );
   const monthlyBudgets = selectMonthlyBudgets(budgets, monthStart);
   return monthlyBudgets.map((budget) => {
-    const membership = budget.budgetCategoryId
-      ? categoriesById.get(budget.budgetCategoryId)
+    const budgetCategory = budget.budgetCategoryId
+      ? budgetCategories.find((item) => item.id === budget.budgetCategoryId)
       : null;
     const spentMinor = spendingRows.reduce((total, transaction) => {
       if (transaction.currency !== budget.currency) return total;
@@ -919,7 +929,9 @@ export async function getBudgetProgress(
       }
       if (
         transaction.budget_assignment_mode === "auto" &&
-        membership?.categoryIds.includes(transaction.category_id)
+        budgetCategory &&
+        transaction.category_name.trim().toLocaleLowerCase() ===
+          budgetCategory.name.trim().toLocaleLowerCase()
       ) {
         return total + Number(transaction.amount_minor);
       }
@@ -1032,6 +1044,10 @@ export async function linkLocalDataToUser(userId: string): Promise<void> {
       "budget_categories",
       "transactions",
       "budgets",
+      "savings",
+      "split_contacts",
+      "splits",
+      "split_settlements",
     ] as const) {
       await db.runAsync(
         `UPDATE ${table} SET user_id = ?, sync_status = 'pending', updated_at = ?, local_updated_at = ? WHERE local_owner_id = ?`,
@@ -1063,7 +1079,20 @@ export async function preparePristineLocalDataForCloudRestore(
     "SELECT COUNT(*) AS count FROM budgets WHERE local_owner_id = ?",
     profile.id,
   );
-  if ((transactionCount?.count ?? 0) > 0 || (budgetCount?.count ?? 0) > 0)
+  const savingCount = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM savings WHERE local_owner_id = ?",
+    profile.id,
+  );
+  const splitCount = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM splits WHERE local_owner_id = ?",
+    profile.id,
+  );
+  if (
+    (transactionCount?.count ?? 0) > 0 ||
+    (budgetCount?.count ?? 0) > 0 ||
+    (savingCount?.count ?? 0) > 0 ||
+    (splitCount?.count ?? 0) > 0
+  )
     return false;
 
   await db.withTransactionAsync(async () => {
@@ -1111,7 +1140,7 @@ export async function resetLocalData(): Promise<void> {
   const db = await getDatabase();
   await db.withTransactionAsync(async () => {
     await db.execAsync(
-      `DELETE FROM sync_outbox; DELETE FROM sync_state; DELETE FROM transactions; DELETE FROM budgets; DELETE FROM budget_categories; DELETE FROM categories; DELETE FROM accounts; DELETE FROM local_profile;`,
+      `DELETE FROM sync_outbox; DELETE FROM sync_state; DELETE FROM split_settlements; DELETE FROM split_participants; DELETE FROM splits; DELETE FROM split_contacts; DELETE FROM savings; DELETE FROM transactions; DELETE FROM budgets; DELETE FROM budget_categories; DELETE FROM categories; DELETE FROM accounts; DELETE FROM local_profile;`,
     );
   });
   await reseedDatabase();
@@ -1126,7 +1155,11 @@ export interface OutboxItem {
     | "categories"
     | "budget_categories"
     | "transactions"
-    | "budgets";
+    | "budgets"
+    | "savings"
+    | "split_contacts"
+    | "splits"
+    | "split_settlements";
   entityId: string;
   attemptCount: number;
 }
@@ -1143,7 +1176,11 @@ export async function listOutbox(userId: string): Promise<OutboxItem[]> {
        WHEN 'budget_categories' THEN 3
        WHEN 'transactions' THEN 4
        WHEN 'budgets' THEN 5
-       ELSE 6 END,
+       WHEN 'savings' THEN 6
+       WHEN 'split_contacts' THEN 7
+       WHEN 'splits' THEN 8
+       WHEN 'split_settlements' THEN 9
+       ELSE 10 END,
        created_at
      LIMIT 100`,
     userId,
@@ -1186,14 +1223,25 @@ export async function getCloudPayload(
     "local_updated_at",
     "last_synced_at",
   ]);
-  const payload = Object.fromEntries(
+  const payload: Record<string, unknown> = Object.fromEntries(
     Object.entries(row).filter(([key]) => !omitted.has(key)),
   );
   if (entityType === "categories")
     payload.is_default = Number(row.is_default) === 1;
-  if (entityType === "budget_categories") {
-    payload.category_ids = parseCategoryIds(row.category_ids_json);
-    delete payload.category_ids_json;
+  if (entityType === "splits") {
+    const participants = await db.getAllAsync<Row>(
+      `SELECT contact_id, remote_user_id, display_name, is_owner, share_minor, paid_minor
+       FROM split_participants WHERE split_id = ? ORDER BY is_owner DESC, display_name`,
+      entityId,
+    );
+    payload.participants = participants.map((participant) => ({
+      contact_id: nullableString(participant, "contact_id"),
+      remote_user_id: nullableString(participant, "remote_user_id"),
+      display_name: asString(participant, "display_name"),
+      is_owner: Number(participant.is_owner) === 1,
+      share_minor: Number(participant.share_minor),
+      paid_minor: Number(participant.paid_minor),
+    }));
   }
   return payload;
 }
@@ -1249,8 +1297,16 @@ function isValidRemoteRow(
     Number.isNaN(Date.parse(updatedAt))
   )
     return false;
-  if (entityType === "transactions" || entityType === "budgets") {
-    const amount = Number(row.amount_minor);
+  if (
+    entityType === "transactions" ||
+    entityType === "budgets" ||
+    entityType === "savings" ||
+    entityType === "splits" ||
+    entityType === "split_settlements"
+  ) {
+    const amount = Number(
+      entityType === "splits" ? row.total_minor : row.amount_minor,
+    );
     if (!Number.isSafeInteger(amount) || amount <= 0) return false;
     const currency = nullableString(row, "currency");
     if (!currency || !/^[A-Z]{3}$/.test(currency)) return false;
@@ -1319,15 +1375,7 @@ export async function mergeRemoteRows(
     );
     if (local && asString(local, "updated_at") > asString(row, "updated_at"))
       continue;
-    const localRow: Row =
-      entityType === "budget_categories"
-        ? {
-            ...row,
-            category_ids_json: JSON.stringify(
-              parseCategoryIds(row.category_ids),
-            ),
-          }
-        : row;
+    const localRow = row;
     const columns = CLOUD_COLUMNS[entityType].filter((column) =>
       Object.hasOwn(localRow, column),
     );

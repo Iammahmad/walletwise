@@ -54,9 +54,9 @@ export function BudgetModal({
       ...categories.map((item) => ({
         value: item.id,
         label: item.name,
-        detail: item.categoryNames.length
-          ? `Includes ${item.categoryNames.join(", ")}`
-          : "Explicit assignments only",
+        detail: item.sourceCategoryName
+          ? `Matching category: ${item.sourceCategoryName}`
+          : "Explicit assignments or a same-name category",
       })),
     ],
     [allowOverall, categories],

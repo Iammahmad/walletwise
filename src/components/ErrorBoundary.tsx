@@ -11,7 +11,7 @@ export class ErrorBoundary extends Component<PropsWithChildren, State> {
   componentDidCatch(error: Error, info: ErrorInfo) { logSafeError('ui-boundary', { message: error.message, componentStack: info.componentStack }); }
   render() {
     if (this.state.failed) {
-      return <View style={styles.root}><Text style={styles.title}>SpendSpeak needs a restart</Text><Text style={styles.message}>Your local data is safe. Close and reopen the app to continue.</Text></View>;
+      return <View style={styles.root}><Text style={styles.title}>WalletWise needs a restart</Text><Text style={styles.message}>Your local data is safe. Close and reopen the app to continue.</Text></View>;
     }
     return this.props.children;
   }

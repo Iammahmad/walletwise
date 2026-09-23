@@ -69,7 +69,7 @@ export default function OnboardingScreen() {
       {step === 2 ? (
         <View style={styles.hero}>
           <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>Local first. Cloud optional.</Text>
-          <Text style={[styles.body, { color: colors.textMuted }]}>Cash, Bank, and your starter categories are ready. Continue privately on this device, or sign in to enable encrypted transport to your Supabase project for backup and device synchronization.</Text>
+          <Text style={[styles.body, { color: colors.textMuted }]}>Cash, Bank, and your starter categories are ready. Continue privately on this device, or sign in to enable Firebase backup and device synchronization.</Text>
           <Card><Feature icon="cloud-offline-outline" title="Local-only mode" text="Nothing depends on signing in. You can enable backup later in Settings." /><Feature icon="sparkles-outline" title="Optional cloud AI" text="AI parsing is off by default and only works after sign-in. Deterministic parsing runs first." /></Card>
           {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
           <Button label="Continue without an account" onPress={() => void finish()} loading={saving} />
