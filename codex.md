@@ -1040,4 +1040,32 @@ Completed on **2026-09-23** before the next GitHub update.
 - Removed hard-coded Firebase and OAuth configuration from `eas.json`. Preview and production builds now use the named EAS environments configured outside the repository.
 - Updated `app.config.ts` to consume the EAS secret file variable `GOOGLE_SERVICES_JSON`, with the ignored root file retained as the local-build fallback. All three EAS profiles now select an explicit environment.
 - A tracked-file scan found no private-key blocks, JWTs, provider-token formats, or real secret assignments. The only secret-name assignment reported is the documented `replace_me` placeholder in `.env.example`.
-- The existing `f9146b9` commit on `origin/main` previously included Firebase mobile client configuration. Firebase mobile API keys are public identifiers and authorization remains enforced by Firestore Rules, but fully removing that historical file would require an explicit history rewrite and force-push. The next normal commit removes it from the current tree.
+- Rewrote local and GitHub history after explicit approval so `.firebaserc`, `google-services.json`, and the old hard-coded EAS environment block are absent from every published branch revision. Both `main` and `version@2.0` were updated with explicit force-with-lease guards, and obsolete local refs/reflogs were pruned. The ignored local files were hash-verified before and after the rewrite and remain available for local Firebase/Android work.
+
+## 29. Deep security audit and hardening
+
+Completed on **2026-09-24** across the React Native application, SQLite data layer, Firebase Security Rules, callable Functions, invitation site, dependency trees, tracked files, and Git history.
+
+### Security fixes
+
+- Restricted `users/{uid}` Firestore subcollections to WalletWise's explicit private collection allowlist. Unknown subcollections and every unrecognized path remain denied, while rate-limit documents remain server-only.
+- Added authenticated per-user rate limits and explicit serialized request-size bounds to push-token registration, connection invites, invitation acceptance, shared Split upserts, and AI parsing. All callable inputs now fail with a controlled `invalid-argument` response instead of leaking Zod details.
+- Limited Split timestamps that affect last-write-wins conflict handling, compared timestamps chronologically rather than lexicographically, and retained creator/connection authorization for shared records.
+- Bounded Gemini output tokens and response byte sizes before JSON parsing. Structured provider output continues through server and client Zod validation and is never written directly to SQLite.
+- Added network timeouts and failure isolation to Expo push delivery so a provider outage cannot undo an already committed invitation or Split.
+- Cloud account deletion now requires authentication performed within the previous ten minutes. Spark-mode client deletion continues to rely on Firebase Auth's own recent-login requirement.
+- Production mobile error logs now emit sanitized scope/code identifiers only; detailed messages remain development-only so provider payloads or user-entered financial text cannot reach production logs.
+- Validated invitation origins as credential-free HTTPS URLs before constructing share links.
+- Disabled Android backup of WalletWise application data, preventing SQLite records and persisted Firebase sessions from being copied into device/cloud backup archives.
+- Moved invitation CSS and JavaScript into same-origin files and added a restrictive Content Security Policy, framing denial, no-sniff, no-referrer, permissions restrictions, cross-origin isolation headers, and no-store caching for invite URLs.
+- Updated Firebase Functions to `firebase-admin` 14.4 and `firebase-functions` 7.4, then applied compatible transitive fixes. The complete Functions dependency audit now reports **0 vulnerabilities**.
+
+### Audit results and verification
+
+- No private-key blocks, service-account credentials, GitHub/npm/Slack tokens, AWS access-key formats, JWTs, or Firebase mobile API-key values remain in tracked files or reachable Git history.
+- No unsafe dynamic evaluation, child-process execution, WebView HTML injection, or unbound user-value SQL construction was found. Dynamic SQLite identifiers are constrained by application unions/database checks; record values use bound parameters.
+- `npm run check` passes strict TypeScript, ESLint, **14 of 14 Jest suites**, and **85 of 85 tests**.
+- Firebase Functions compile successfully and `npm --prefix functions audit` reports zero advisories.
+- `npx expo install --check` reports compatible SDK 57 dependencies; Expo Doctor passes **21 of 21 checks**; the resolved public Expo configuration is valid.
+- The application production dependency audit has no high or critical findings. Three moderate reports remain in Expo Router's `query-string`/`decode-uri-component` chain. npm's proposed fix is an incompatible downgrade from Expo Router 57 to 5, so it was rejected pending an Expo-compatible upstream release.
+- The full development-tree audit additionally reports moderate transitive findings inside the latest Firebase CLI. These are local deployment tooling, are not bundled into the APK or Functions runtime, and npm likewise proposes an obsolete CLI downgrade rather than a compatible remediation.

@@ -184,9 +184,14 @@ Run the full local quality gate:
 ```powershell
 & "C:\Program Files\nodejs\npm.cmd" run check
 & "C:\Program Files\nodejs\npm.cmd" --prefix functions run build
+& "C:\Program Files\nodejs\npm.cmd" --prefix functions audit
+& "C:\Program Files\nodejs\npm.cmd" audit --omit=dev
 & "C:\Program Files\nodejs\npx.cmd" expo install --check
+& "C:\Program Files\nodejs\npx.cmd" expo-doctor
 & "C:\Program Files\nodejs\npx.cmd" expo config --type public
 ```
+
+The Functions runtime currently audits clean. The app production tree has no high or critical advisories; npm reports a moderate Expo Router URL-decoder advisory for which its proposed remediation is an SDK-incompatible Router downgrade. Keep Expo SDK 57 packages aligned with `expo install --check` and update when Expo publishes a compatible patched Router instead of using `npm audit fix --force`.
 
 The tests cover money parsing/formatting, dates, voice parsing, AI validation, categories, budgets, CRUD behavior, offline outbox synchronization, Firebase auth ownership, equal split remainder handling, loans/debt direction, settlements, and the savings separation contract.
 
